@@ -53,6 +53,25 @@ const userSchema = mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
     },
+    emergencyContact: {
+      name: { type: String },
+      relation: { type: String },
+      number: { type: String },
+      address: { type: String },
+    },
+    personalInfo: {
+      levelGroup: { type: String },
+      gradeLevel: { type: String },
+      strandCourse: { type: String },
+      contactNumber: { type: String },
+    },
+    pushToken: {
+      type: String,
+    },
+    lastSeenReport: {
+      type: Date,
+      default: Date.now,
+    },
   },
   {
     timestamps: true,

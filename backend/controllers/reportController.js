@@ -1,4 +1,6 @@
 const EmergencyReport = require('../models/EmergencyReport');
+const User = require('../models/User');
+const { sendPushNotification } = require('../utils/notification');
 const { Server } = require('socket.io');
 let ioInstance;
 function setIO(io) { ioInstance = io; }
@@ -8,22 +10,29 @@ function setIO(io) { ioInstance = io; }
 // @access  Private
 const createReport = async (req, res) => {
   const { type, location, status, statusHistory, createdAt, syncedFromOffline, user: reportUser } = req.body;
+  const offlineId = req.headers['x-offline-id'];
 
   const userId = reportUser?._id || reportUser || req.user._id;
 
   const isOfflineSync = syncedFromOffline === true || (statusHistory && Array.isArray(statusHistory) && statusHistory.length > 0);
 
   // ✅ CRITICAL FIX: Better duplicate detection with multiple criteria
-  if (isOfflineSync && createdAt) {
+  if (isOfflineSync && (createdAt || offlineId)) {
     const existingReport = await EmergencyReport.findOne({
-      user: userId,
-      type,
-      'location.latitude': location?.latitude,
-      'location.longitude': location?.longitude,
-      createdAt: {
-        $gte: new Date(new Date(createdAt).getTime() - 60000),
-        $lte: new Date(new Date(createdAt).getTime() + 60000)
-      }
+      $or: [
+        {
+          user: userId,
+          type,
+          'location.latitude': location?.latitude,
+          'location.longitude': location?.longitude,
+          createdAt: createdAt ? {
+            $gte: new Date(new Date(createdAt).getTime() - 30000), // Reduced window to 30s
+            $lte: new Date(new Date(createdAt).getTime() + 30000)
+          } : undefined
+        },
+        // Also check by a unique property if we had one, but since we don't, 
+        // the location + type + time window is our best bet.
+      ].filter(q => q.createdAt !== undefined)
     });
 
     if (existingReport) {
@@ -134,6 +143,26 @@ const createReport = async (req, res) => {
     
   if (ioInstance) {
     ioInstance.emit('report:created', populated);
+  }
+
+  // Send push notification for new reports
+  try {
+    const activeCount = await EmergencyReport.countDocuments({ status: { $ne: 'RESOLVED' } });
+    const locationStr = populated.location?.description || 
+                       (populated.location?.latitude ? `${populated.location.latitude.toFixed(4)}, ${populated.location.longitude.toFixed(4)}` : 'Unknown');
+    
+    await sendPushNotification({
+      title: `🚨 New ${populated.type} Alert!`,
+      body: `Reporter: ${populated.user?.firstName} ${populated.user?.lastName}\nLoc: ${locationStr}\nTime: ${new Date(populated.createdAt).toLocaleTimeString()}`,
+      data: { 
+        type: 'NEW_REPORT', 
+        reportId: populated._id,
+        alertType: populated.type
+      },
+      badge: activeCount
+    });
+  } catch (pushErr) {
+    console.error('[Push] Failed to send report notification:', pushErr);
   }
   
   console.log(`[Report] Created ${isOfflineSync ? 'offline sync' : 'new'} report:`, createdReport._id, 'Status:', createdReport.status, 'History count:', createdReport.statusHistory.length);
@@ -289,10 +318,39 @@ const bulkUpdateReportStatus = async (req, res) => {
   res.json({ results });
 };
 
+// @desc    Get current user's reports
+// @route   GET /api/reports/my
+// @access  Private
+const getMyReports = async (req, res) => {
+  const reports = await EmergencyReport.find({ user: req.user._id })
+    .populate('user', 'firstName lastName userCode role')
+    .populate('statusHistory.updatedBy', 'firstName lastName role userCode')
+    .sort({ createdAt: -1 });
+  res.json(reports);
+};
+
+// @desc    Get unseen reports count
+// @route   GET /api/reports/unseen
+// @access  Private
+const getUnseenReportsCount = async (req, res) => {
+  const user = await User.findById(req.user._id);
+  if (!user) return res.status(404).json({ message: 'User not found' });
+
+  const lastSeen = user.lastSeenReport || new Date(0);
+  const count = await EmergencyReport.countDocuments({
+    createdAt: { $gt: lastSeen },
+    status: { $ne: 'RESOLVED' }
+  });
+
+  res.json({ count });
+};
+
 module.exports = { 
   createReport, 
   getReports, 
-  getActiveReports, 
+  getMyReports,
+  getActiveReports,
+  getUnseenReportsCount,
   updateReportStatus, 
   acknowledgeReport, 
   bulkUpdateReportStatus,

@@ -3,7 +3,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import NetInfo from '@react-native-community/netinfo';
 
-function resolveBaseURL() {
+export function resolveBaseURL() {
   let base = 'http://localhost:5000/api';
   const hostUri = Constants?.expoConfig?.hostUri || Constants?.debuggerHost;
   if (hostUri) {

@@ -68,7 +68,7 @@ const Map2D = ({ highlightId, focusTo, onConfirmLocation }) => {
     setSocket(s);
     api.get('/reports/active')
       .then(({ data }) => setPulses(data))
-      .catch(() => {});
+      .catch(() => { });
     s.on('reports:active', (data) => setPulses(data));
     s.on('report:created', (report) => {
       setPulses((prev) => {

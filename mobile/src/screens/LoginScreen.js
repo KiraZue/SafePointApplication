@@ -24,7 +24,7 @@ const LoginScreen = () => {
   return (
     <ImageBackground source={require('../../assets/SafePoint-assets/MobileBG.png')} style={styles.bg}>
       <View style={styles.container}>
-        <Image source={require('../../assets/SafePoint-assets/Logo.png')} style={styles.heroLogo} />
+        <Image source={require('../../assets/icon.png')} style={styles.heroLogo} />
         <View style={styles.card}>
           <View style={styles.cardHeader}>
             <Image source={require('../../assets/SafePoint-assets/2log.png')} style={styles.miniLogo} />
@@ -66,9 +66,9 @@ const LoginScreen = () => {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, resizeMode: 'cover' },
-  container: { flex: 1, padding: 25, paddingTop: 0, justifyContent: 'center', gap: 0},
-  heroLogo: { width: 720, height: 360, resizeMode: 'contain', alignSelf: 'center' },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 18,paddingBottom: 30, elevation: 6, bottom: 90},
+  container: { flex: 1, padding: 25, paddingTop: 0, justifyContent: 'center', gap: 16},
+  heroLogo: { width: 200, height: 200, resizeMode: 'contain', alignSelf: 'center' },
+  card: { backgroundColor: '#fff', borderRadius: 16, padding: 18,paddingBottom: 30, elevation: 6, bottom: 0},
   cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   miniLogo: { width: 90, height: 90, resizeMode: 'contain', marginBottom: -30},
   cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1f1f1f', marginLeft: -35 },

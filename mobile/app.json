@@ -37,7 +37,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/SafePoint-assets/Logo.png",
+          "icon": "./assets/icon.png",
           "color": "#ffffff"
         }
       ],

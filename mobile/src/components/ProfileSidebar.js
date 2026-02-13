@@ -72,7 +72,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth }) => {
       try {
         const { data } = await api.get('/users/me');
         const ec = data.emergencyContact || {};
-        const p = data.personal || {};
+        const p = data.personalInfo || {}; // Fixed: backend returns personalInfo
         setContactPerson(ec.name || '');
         setRelation(ec.relation || '');
         setContactNo(ec.number || '');
@@ -187,7 +187,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth }) => {
   };
   
   const savePersonal = async () => {
-    const payload = { personal: { levelGroup, gradeLevel, strandCourse, contactNumber: personalContact } };
+    const payload = { personalInfo: { levelGroup, gradeLevel, strandCourse, contactNumber: personalContact } };
     const candidates = ['/users/profile', '/users/me', '/users/update-profile'];
     let success = false, lastErr;
     for (const ep of candidates) {
@@ -204,7 +204,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth }) => {
       setEditingPersonal(false);
       try {
         const { data } = await api.get('/users/me');
-        const p = data.personal || {};
+        const p = data.personalInfo || {};
         setLevelGroup(p.levelGroup || '');
         setGradeLevel(p.gradeLevel || '');
         setStrandCourse(p.strandCourse || '');

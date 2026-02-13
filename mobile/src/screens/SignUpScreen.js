@@ -49,7 +49,7 @@ const SignUpScreen = ({ navigation }) => {
   return (
     <ImageBackground source={require('../../assets/SafePoint-assets/MobileBG.png')} style={styles.bg}>
       <View style={styles.container}>
-        <Image source={require('../../assets/SafePoint-assets/Logo.png')} style={styles.heroLogo} />
+        <Image source={require('../../assets/icon.png')} style={styles.heroLogo} />
         {step === 'code' && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>

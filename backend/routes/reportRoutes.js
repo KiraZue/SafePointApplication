@@ -4,7 +4,9 @@ const router = express.Router();
 const { 
   createReport, 
   getReports, 
+  getMyReports,
   getActiveReports, 
+  getUnseenReportsCount,
   updateReportStatus, 
   acknowledgeReport,
   bulkUpdateReportStatus 
@@ -15,8 +17,14 @@ router.route('/')
     .post(protect, createReport)
     .get(protect, getReports);
 
+router.route('/my')
+    .get(protect, getMyReports);
+
 router.route('/active')
     .get(protect, getActiveReports);
+
+router.route('/unseen')
+    .get(protect, getUnseenReportsCount);
 
 router.route('/bulk/status')
     .put(protect, bulkUpdateReportStatus);

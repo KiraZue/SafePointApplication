@@ -9,6 +9,7 @@ const EmergencyReport = require('./models/EmergencyReport');
 const http = require('http');
 const { Server } = require('socket.io');
 const { setIO } = require('./controllers/reportController');
+const { sendPushNotification } = require('./utils/notification');
 
 dotenv.config();
 
@@ -139,10 +140,51 @@ io.on('connection', async (socket) => {
         // Broadcast to ALL clients
         io.emit('report:updated', populated);
         console.log('[Socket.io] Broadcasted status update for report:', reportId);
+
+        // Send push notification for status update
+        try {
+          const activeCount = await EmergencyReport.countDocuments({ status: { $ne: 'RESOLVED' } });
+          const updater = await User.findById(userId);
+          
+          await sendPushNotification({
+            title: `🔄 Report Status Updated: ${status}`,
+            body: `Report: ${populated.type}\nUpdated by: ${updater?.firstName} ${updater?.lastName}\nStatus: ${status}`,
+            data: { 
+              type: 'STATUS_UPDATE', 
+              reportId: populated._id,
+              status: status
+            },
+            badge: activeCount
+          });
+        } catch (pushErr) {
+          console.error('[Push] Failed to send status update notification:', pushErr);
+        }
       }
     } catch (err) {
       console.error('[Socket.io] Error updating status:', err.message);
       socket.emit('report:update_error', { message: err.message });
+    }
+  });
+
+  // Handle Wi-Fi Direct group notification
+  socket.on('wifi:group_started', async (data) => {
+    try {
+      const { userId, groupName } = data;
+      const user = await User.findById(userId);
+      
+      console.log(`[Socket.io] Wi-Fi Direct group started by ${user?.firstName} (${groupName})`);
+      
+      await sendPushNotification({
+        title: '📶 Wi-Fi Direct Group Started',
+        body: `${user?.firstName} ${user?.lastName} started a group: "${groupName}". Connect to stay safe offline.`,
+        data: { 
+          type: 'WIFI_GROUP_STARTED', 
+          userId: userId,
+          groupName: groupName
+        }
+      });
+    } catch (err) {
+      console.error('[Socket.io] Error notifying Wi-Fi group:', err.message);
     }
   });
 

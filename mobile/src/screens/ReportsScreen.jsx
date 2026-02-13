@@ -2,12 +2,15 @@ import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, SectionList, TouchableOpacity, Alert, ActivityIndicator, Pressable } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import api, { BASE_URL } from '../services/api';
+import { DeviceEventEmitter } from 'react-native';
+import axios from 'axios';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import api, { BASE_URL, resolveBaseURL } from '../services/api';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
-import { 
-  getOfflineReports, 
-  fetchHostOfflineReports, 
+import {
+  getOfflineReports,
+  fetchHostOfflineReports,
   updateOfflineReportStatus,
   syncOfflineReportsToBackend,
   getStoredOfflineReports,
@@ -15,11 +18,12 @@ import {
   getHostedReports,
   fetchOnlineReportsFromHost,
   addHostedReport,
-  removeHostedReport,
-  updateHostedReport
+  updateHostedReport,
+  saveReportHistory,
+  getStoredReportHistory
 } from '../services/offline';
 import NetInfo from '@react-native-community/netinfo';
-import { isProxyActive } from '../services/ProxyServer';
+import { isProxyActive, addHostedReportToMemory, updateHostedReportInMemory, broadcastHostedStatusUpdate } from '../services/ProxyServer';
 import io from 'socket.io-client';
 
 const statusColor = (status) => {
@@ -54,14 +58,10 @@ const ReportsScreen = () => {
   const [syncingReports, setSyncingReports] = useState(new Set());
   const [loadingOnline, setLoadingOnline] = useState(false);
   const [loadingHost, setLoadingHost] = useState(false);
-  const [loadingOffline, setLoadingOffline] = useState(false);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const [todayPage, setTodayPage] = useState(1);
   const [earlierPage, setEarlierPage] = useState(1);
-  const [longPressedReport, setLongPressedReport] = useState(null);
-  const [reportToUnshare, setReportToUnshare] = useState(null);
-  const longPressTimerRef = useRef(null);
-  const isLongPressingRef = useRef(false);
   const socketRef = useRef(null);
   const { user } = useAuth();
   const navigation = useNavigation();
@@ -73,21 +73,29 @@ const ReportsScreen = () => {
   const ITEMS_PER_PAGE = 20;
 
   const checkConnectivity = async () => {
-    const netInfo = await NetInfo.fetch();
-    const connected = netInfo.isConnected && netInfo.isInternetReachable;
-    
-    const isWifiDirectHost = BASE_URL.includes('192.168.49.1');
-    
-    setIsOffline(!connected && !isWifiDirectHost);
-    setIsConnectedToHost(isWifiDirectHost);
-    
-    return { connected, isWifiDirectHost };
+    try {
+      const netInfo = await NetInfo.fetch();
+      const connected = netInfo.isConnected && netInfo.isInternetReachable;
+
+      // Use the helper from api.js for consistency
+      const isWifiDirectHost = BASE_URL.includes('192.168.49.1');
+      const isCurrentlyHosting = isProxyActive();
+
+      setIsOffline(!connected);
+      // isConnectedToHost should only be true if we are a CLIENT connected to a host
+      setIsConnectedToHost(isWifiDirectHost && !isCurrentlyHosting);
+
+      return { connected, isWifiDirectHost, isCurrentlyHosting };
+    } catch (e) {
+      console.error('[Reports] Error checking connectivity:', e);
+      return { connected: false, isWifiDirectHost: false, isCurrentlyHosting: false };
+    }
   };
 
-  // Socket.io setup for real-time updates on shared reports
+  // Socket.io setup for real-time updates
   useEffect(() => {
     const isHosting = isProxyActive();
-    
+
     if (!isHosting) {
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -99,7 +107,7 @@ const ReportsScreen = () => {
     const setupSocket = async () => {
       try {
         const connectivity = await checkConnectivity();
-        
+
         if (!connectivity.connected) {
           console.log('[Socket] No backend connection, skipping socket setup');
           return;
@@ -107,61 +115,53 @@ const ReportsScreen = () => {
 
         const socketUrl = BASE_URL.replace(/\/api$/, '');
         console.log('[Socket] Connecting to:', socketUrl);
-        
-        const socket = io(socketUrl, { 
+
+        const socket = io(socketUrl, {
           transports: ['websocket'],
           reconnection: true,
           reconnectionAttempts: 5,
-          timeout: 10000 
+          timeout: 10000
         });
-        
+
         socketRef.current = socket;
-        
+
         socket.on('connect', () => {
           console.log('[Socket] Connected for real-time updates');
         });
-        
+
         socket.on('disconnect', () => {
           console.log('[Socket] Disconnected');
         });
-        
+
         socket.on('connect_error', (err) => {
           console.error('[Socket] Connection error:', err.message);
         });
-        
-        // Listen for report updates
+
         socket.on('report:updated', async (updatedReport) => {
           console.log('[Socket] Report updated:', updatedReport._id);
-          
+
           const hosted = await getHostedReports();
-          const isShared = hosted.some(r => r._id === updatedReport._id && (r.sharedFromOnline || r._isPersistentShare));
-          
-          if (isShared) {
-            // CRITICAL: Update while preserving persistence flags
-            const existingReport = hosted.find(r => r._id === updatedReport._id);
-            await updateHostedReport(updatedReport._id, {
-              ...updatedReport,
-              sharedFromOnline: existingReport.sharedFromOnline,
-              _isPersistentShare: existingReport._isPersistentShare,
-              sharedAt: existingReport.sharedAt
-            });
+          const isHosted = hosted.some(r => r._id === updatedReport._id);
+
+          if (isHosted) {
+            await updateHostedReport(updatedReport._id, updatedReport);
             await loadHostedReports();
-            console.log('[Socket] Updated shared report with preserved flags:', updatedReport._id);
+            console.log('[Socket] Updated hosted report:', updatedReport._id);
           }
         });
-        
+
         socket.on('report:created', async (newReport) => {
           console.log('[Socket] New report created:', newReport._id);
           await loadOnlineReports(false);
         });
-        
+
       } catch (e) {
         console.error('[Socket] Setup error:', e);
       }
     };
 
     setupSocket();
-    
+
     return () => {
       if (socketRef.current) {
         socketRef.current.disconnect();
@@ -173,39 +173,105 @@ const ReportsScreen = () => {
   const loadOnlineReports = async (showLoading = true) => {
     try {
       if (showLoading) setLoadingOnline(true);
-      
+
       const connectivity = await checkConnectivity();
-      
+
+      // 1. Try Direct Internet Connection (Priority)
+      if (connectivity.connected) {
+        const backendUrl = resolveBaseURL();
+        console.log('[Reports] Fetching online reports directly from backend:', backendUrl);
+
+        let headers = {};
+        try {
+          const userInfoStr = await AsyncStorage.getItem('userInfo');
+          if (userInfoStr) {
+            const userInfo = JSON.parse(userInfoStr);
+            if (userInfo.token) {
+              headers['Authorization'] = `Bearer ${userInfo.token}`;
+            }
+          }
+        } catch (e) {
+          console.error('[Reports] Error retrieving token:', e);
+        }
+
+        const { data } = await axios.get(`${backendUrl}/reports`, {
+          timeout: 5000,
+          headers: headers
+        });
+
+        const storedReports = await getStoredOfflineReports();
+        const hostedReportsLocal = await getHostedReports();
+
+        const mergedData = data.map(onlineR => {
+          const localOffline = storedReports.find(l => l._id === onlineR._id || l._originalOfflineId === onlineR._id);
+          const localHosted = hostedReportsLocal.find(l => l._id === onlineR._id || l._originalOfflineId === onlineR._id);
+
+          const localR = localOffline || localHosted;
+
+          if (localR && localR.statusHistory && localR.statusHistory.length > 0) {
+            const localHistory = [...localR.statusHistory].sort((a, b) =>
+              new Date(b.updatedAt || b.timestamp || 0).getTime() - new Date(a.updatedAt || a.timestamp || 0).getTime()
+            );
+
+            const onlineHistory = [...(onlineR.statusHistory || [])].sort((a, b) =>
+              new Date(b.updatedAt || b.timestamp || 0).getTime() - new Date(a.updatedAt || a.timestamp || 0).getTime()
+            );
+
+            const localLatest = localHistory[0];
+            const onlineLatest = onlineHistory.length > 0 ? onlineHistory[0] : null;
+
+            if (localLatest && (!onlineLatest ||
+              new Date(localLatest.updatedAt || localLatest.timestamp || 0).getTime() >
+              new Date(onlineLatest.updatedAt || onlineLatest.timestamp || 0).getTime())) {
+
+              return {
+                ...onlineR,
+                status: localLatest.status,
+                statusHistory: localR.statusHistory
+              };
+            }
+          }
+          return onlineR;
+        });
+
+        const deduped = [];
+        const seen = new Set();
+        for (const r of mergedData) {
+          const key = r._id || `${r.type}_${r.createdAt}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            deduped.push(r);
+          }
+        }
+        setReports(deduped);
+
+        for (const onlineReport of data) {
+          await updateSyncedOfflineReport(onlineReport);
+        }
+
+        return true;
+      }
+
+      // 2. Fallback to Host Proxy (if no internet but connected to host)
       if (connectivity.isWifiDirectHost && !BASE_URL.includes('localhost')) {
-        console.log('[Reports] Fetching online reports from host');
+        console.log('[Reports] Fetching online reports from host (No Internet)');
         try {
           const onlineFromHost = await fetchOnlineReportsFromHost(BASE_URL);
           if (onlineFromHost && onlineFromHost.length > 0) {
             console.log('[Reports] Using online reports from host:', onlineFromHost.length);
             setReports(onlineFromHost);
-            
+
             for (const onlineReport of onlineFromHost) {
               await updateSyncedOfflineReport(onlineReport);
             }
-            
+
             return true;
           }
         } catch (err) {
           console.error('[Reports] Failed to fetch from host:', err.message);
         }
       }
-      
-      if (connectivity.connected) {
-        const { data } = await api.get('/reports', { timeout: 5000 });
-        setReports(data);
-        
-        for (const onlineReport of data) {
-          await updateSyncedOfflineReport(onlineReport);
-        }
-        
-        return true;
-      }
-      
+
       return false;
     } catch (err) {
       console.error('[Reports] Failed to load online reports:', err.message);
@@ -219,14 +285,14 @@ const ReportsScreen = () => {
     try {
       setLoadingHost(true);
       const connectivity = await checkConnectivity();
-      
+
       if (connectivity.isWifiDirectHost && !BASE_URL.includes('localhost')) {
         const hostOffline = await fetchHostOfflineReports(BASE_URL);
         console.log('[Reports] Loaded host reports:', hostOffline.length);
         setHostReports(hostOffline);
         return true;
       }
-      
+
       return false;
     } catch (err) {
       console.error('[Reports] Failed to load host reports:', err.message);
@@ -240,13 +306,6 @@ const ReportsScreen = () => {
     try {
       const hosted = await getHostedReports();
       console.log('[Reports] Loaded hosted reports:', hosted.length);
-      
-      // Log persistence flags for debugging
-      const persistentCount = hosted.filter(r => r._isPersistentShare).length;
-      if (persistentCount > 0) {
-        console.log('[Reports] Persistent shared reports:', persistentCount);
-      }
-      
       setHostedReports(hosted);
       return true;
     } catch (err) {
@@ -255,66 +314,212 @@ const ReportsScreen = () => {
     }
   };
 
-  const loadOfflineReports = async () => {
+  const loadReportHistory = async () => {
     if (loadingRef.current) {
       return;
     }
-    
+
     const now = Date.now();
     if (now - lastLoadTimeRef.current < LOAD_DEBOUNCE_MS) {
       return;
     }
-    
+
     loadingRef.current = true;
     lastLoadTimeRef.current = now;
-    
+
     try {
-      setLoadingOffline(true);
-      const localOffline = await getStoredOfflineReports();
-      
-      setOfflineReports(prev => {
-        const prevJson = JSON.stringify(prev);
-        const newJson = JSON.stringify(localOffline);
-        if (prevJson !== newJson) {
-          return localOffline;
+      setLoadingHistory(true);
+
+      const connectivity = await checkConnectivity();
+      let historyData = [];
+
+      // 1. Try to fetch from backend if online
+      if (connectivity.connected) {
+        try {
+          console.log('[Reports] Fetching user report history from backend...');
+          const { data } = await api.get('/reports/my', { timeout: 8000 });
+          if (data && Array.isArray(data)) {
+            historyData = data;
+            // Save to local storage for offline access
+            await saveReportHistory(data);
+            console.log('[Reports] Saved', data.length, 'reports to history storage');
+          }
+        } catch (err) {
+          console.error('[Reports] Failed to fetch history from backend:', err.message);
+          // Fallback to local history
+          historyData = await getStoredReportHistory();
         }
-        return prev;
+      } else {
+        // 2. Offline: Load from local history storage
+        console.log('[Reports] Offline: Loading history from local storage');
+        historyData = await getStoredReportHistory();
+      }
+
+      // Get other local reports that might not be synced yet
+      const localOffline = await getStoredOfflineReports();
+      const hosted = await getHostedReports();
+
+      // Combine all reports and filter by current user
+      const allUserReports = [...historyData];
+      const seenIds = new Set(historyData.map(r => r._id));
+
+      // Helper to check ownership
+      const isCurrentUser = (report) => {
+        if (!report.user) return false;
+        const uid = typeof report.user === 'string' ? report.user : report.user._id;
+        return uid === user?._id;
+      };
+
+      // Add unsynced local reports
+      localOffline.forEach(report => {
+        if (isCurrentUser(report) && !seenIds.has(report._id) && !seenIds.has(report._originalOfflineId)) {
+          seenIds.add(report._id);
+          if (report._originalOfflineId) seenIds.add(report._originalOfflineId);
+          allUserReports.push({ ...report, isOffline: true });
+        }
       });
+
+      hosted.forEach(report => {
+        if (isCurrentUser(report) && !seenIds.has(report._id) && !seenIds.has(report._originalOfflineId)) {
+          seenIds.add(report._id);
+          if (report._originalOfflineId) seenIds.add(report._originalOfflineId);
+          allUserReports.push({ ...report, hostedInGroup: true });
+        }
+      });
+
+      // Deduplicate and sort by createdAt
+      const uniqueReports = allUserReports.sort((a, b) =>
+        new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime()
+      );
+
+      setOfflineReports(uniqueReports);
+      console.log('[Reports] Loaded report history:', uniqueReports.length);
+
     } catch (err) {
-      console.error('[Reports] Failed to load offline reports:', err);
+      console.error('[Reports] Failed to load report history:', err.message);
     } finally {
-      setLoadingOffline(false);
+      setLoadingHistory(false);
       loadingRef.current = false;
+    }
+  };
+
+  const syncSingleReport = async (reportId) => {
+    try {
+      if (syncingReports.has(reportId)) return;
+
+      const connectivity = await checkConnectivity();
+      if (!connectivity.connected || connectivity.isWifiDirectHost) {
+        Alert.alert('No Connection', 'You need a direct internet connection to sync reports to the backend.');
+        return;
+      }
+
+      setSyncingReports(prev => new Set(prev).add(reportId));
+
+      // ✅ FIX: Look in all possible storage locations
+      const storedOffline = await getStoredOfflineReports();
+      const hostedReportsLocal = await getHostedReports();
+
+      let report = storedOffline.find(r => r._id === reportId || r._originalOfflineId === reportId);
+      if (!report) {
+        report = hostedReportsLocal.find(r => r._id === reportId || r._originalOfflineId === reportId);
+      }
+
+      if (!report) {
+        console.error('[Sync] Report not found in any storage:', reportId);
+        Alert.alert('Error', 'Report not found in local storage. It may have already been synced.');
+        setSyncingReports(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(reportId);
+          return newSet;
+        });
+        return;
+      }
+
+      console.log('[Sync] Found report to sync:', report._id, 'Type:', report.type);
+
+      const location = {};
+      if (report.latitude !== undefined && report.longitude !== undefined) {
+        location.latitude = report.latitude;
+        location.longitude = report.longitude;
+      }
+      if (report.location?.x !== undefined) location.x = report.location.x;
+      if (report.location?.y !== undefined) location.y = report.location.y;
+      if (report.location?.description) location.description = report.location.description;
+
+      const reportData = {
+        type: report.type,
+        location: location,
+        description: report.description || '',
+        imageUri: report.imageUri || null,
+        user: report.user,
+        createdAt: report.createdAt,
+        status: report.status || 'REPORTED',
+        statusHistory: report.statusHistory || [],
+        syncedFromOffline: true
+      };
+
+      console.log('[Sync] Sending report to backend...');
+      const response = await api.post('/reports', reportData, {
+        timeout: 15000,
+        headers: {
+          'X-Offline-ID': reportId
+        }
+      });
+
+      console.log('[Sync] Backend response:', response.data?._id);
+
+      // Sync the report using the offline service
+      await syncOfflineReportsToBackend([reportId]);
+
+      Alert.alert('Success', 'Report synced successfully.');
+      await load(false);
+
+    } catch (err) {
+      console.error('[Sync] Single sync failed:', err.message);
+      Alert.alert('Sync Failed', err.response?.data?.message || err.message || 'An error occurred during sync.');
+    } finally {
+      setSyncingReports(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(reportId);
+        return newSet;
+      });
     }
   };
 
   const syncOfflineReports = async () => {
     try {
       const now = Date.now();
-      
+
       if (now - lastSyncTimeRef.current < SYNC_DEBOUNCE_MS) {
         return;
       }
-      
+
       lastSyncTimeRef.current = now;
-      
+
       const connectivity = await checkConnectivity();
-      
+
       if (!connectivity.connected || connectivity.isWifiDirectHost) {
         return;
       }
 
-      const unsyncedReports = offlineReports.filter(r => !r.syncedToBackend && r.isOffline);
-      
+      // Get unsynced reports from local storage (not from the displayed history)
+      const storedOffline = await getStoredOfflineReports();
+      const hostedReportsLocal = await getHostedReports();
+
+      const unsyncedReports = [
+        ...storedOffline.filter(r => !r.syncedToBackend && r.user && r.user._id === user._id),
+        ...hostedReportsLocal.filter(r => !r.syncedToBackend && r.user && r.user._id === user._id)
+      ];
+
       if (unsyncedReports.length === 0) {
         return;
       }
 
-      console.log(`[Sync] Starting: ${unsyncedReports.length} reports`);
-      
+      console.log(`[Sync] Starting auto-sync: ${unsyncedReports.length} reports`);
+
       for (const report of unsyncedReports) {
         setSyncingReports(prev => new Set(prev).add(report._id));
-        
+
         try {
           const location = {};
           if (report.latitude !== undefined && report.longitude !== undefined) {
@@ -324,7 +529,7 @@ const ReportsScreen = () => {
           if (report.location?.x !== undefined) location.x = report.location.x;
           if (report.location?.y !== undefined) location.y = report.location.y;
           if (report.location?.description) location.description = report.location.description;
-          
+
           const reportData = {
             type: report.type,
             location: location,
@@ -336,12 +541,19 @@ const ReportsScreen = () => {
             statusHistory: report.statusHistory || [],
             syncedFromOffline: true
           };
-          
-          await api.post('/reports', reportData, { timeout: 15000 });
+
+          await api.post('/reports', reportData, {
+            timeout: 15000,
+            headers: {
+              'X-Offline-ID': report._id
+            }
+          });
           await syncOfflineReportsToBackend([report._id]);
-          
+
+          console.log('[Sync] ✓ Auto-synced:', report._id);
+
         } catch (err) {
-          console.error('[Sync] Failed:', err.message);
+          console.error('[Sync] Failed to auto-sync:', err.message);
         } finally {
           setSyncingReports(prev => {
             const newSet = new Set(prev);
@@ -350,11 +562,13 @@ const ReportsScreen = () => {
           });
         }
       }
-      
-      await loadOfflineReports();
-      
+
+      // Reload both online reports and history after sync
+      await loadOnlineReports(false);
+      await loadReportHistory();
+
     } catch (err) {
-      console.error('[Sync] Error:', err);
+      console.error('[Sync] Auto-sync error:', err);
     }
   };
 
@@ -362,29 +576,28 @@ const ReportsScreen = () => {
     if (loadingRef.current && showLoading) {
       return;
     }
-    
+
     const connectivity = await checkConnectivity();
-    
-    await loadOfflineReports();
-    
-    const isHosting = isProxyActive();
-    if (isHosting) {
-      await loadHostedReports();
-    }
-    
+
+    // Always load hosted reports so they display even if not currently hosting
+    await loadHostedReports();
+
     if (connectivity.connected) {
       console.log('[Reports] Loading online reports (has internet)');
       const success = await loadOnlineReports(showLoading);
       if (success) {
+        await loadReportHistory();
         await syncOfflineReports();
       }
     }
-    
+
     if (connectivity.isWifiDirectHost) {
       console.log('[Reports] Loading host reports (connected to Wi-Fi Direct)');
       await loadHostReports();
     }
-    
+
+    await loadReportHistory();
+
     if (!initialLoadComplete) {
       setInitialLoadComplete(true);
     }
@@ -392,128 +605,75 @@ const ReportsScreen = () => {
 
   useEffect(() => {
     load(true);
-    
-    const timer = setInterval(() => load(false), 15000);
-    
+
+    const timer = setInterval(() => load(false), 10000);
+
     return () => clearInterval(timer);
-  }, [isConnectedToHost]);
+  }, [isConnectedToHost, BASE_URL]);
+
+  useEffect(() => {
+    const sub = DeviceEventEmitter.addListener('HOSTED_REPORTS_CHANGED', () => {
+      loadHostedReports();
+      loadReportHistory();
+    });
+    return () => {
+      try { sub && sub.remove(); } catch (e) { }
+    };
+  }, []);
 
   const [busyId, setBusyId] = useState(null);
 
-  const handleLongPressStart = (report) => {
-    const isHosting = isProxyActive();
-    
-    if (!isHosting || viewMode !== 'online') {
-      return;
-    }
-    
-    const alreadyHosted = hostedReports.some(r => r._id === report._id);
-    if (alreadyHosted) {
-      return;
-    }
-    
-    isLongPressingRef.current = false;
-    
-    longPressTimerRef.current = setTimeout(() => {
-      isLongPressingRef.current = true;
-      setLongPressedReport(report);
-    }, 2500);
-  };
-
-  const handleLongPressEnd = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-  };
-
   const handleCardPress = (item) => {
-    if (!isLongPressingRef.current) {
-      navigation.navigate('Home', { 
-        highlightId: item._id, 
-        report: item,
-        latitude: item.latitude || item.location?.latitude,
-        longitude: item.longitude || item.location?.longitude
-      });
-    }
-    isLongPressingRef.current = false;
-  };
-
-  const confirmHostReport = async () => {
-    if (!longPressedReport) return;
-    
-    try {
-      console.log('[Host] Manually sharing online report:', longPressedReport._id);
-      
-      // CRITICAL: Add with _isPersistentShare = true for manual shares
-      await addHostedReport({
-        ...longPressedReport,
-        _id: longPressedReport._id,
-        latitude: longPressedReport.location?.latitude || 50,
-        longitude: longPressedReport.location?.longitude || 50,
-        location: longPressedReport.location,
-        user: longPressedReport.user,
-        createdAt: longPressedReport.createdAt,
-        status: longPressedReport.status,
-        statusHistory: longPressedReport.statusHistory || [],
-        syncedToBackend: true,
-        synced: true,
-        hostedFromOnline: true,
-        sharedFromOnline: true,
-        _isPersistentShare: true, // CRITICAL: Mark as persistent
-        sharedAt: new Date().toISOString()
-      });
-      
-      await loadHostedReports();
-      
-      Alert.alert(
-        'Report Shared',
-        'This report is now shared with connected clients in your Wi-Fi Direct group and will receive real-time updates.',
-        [{ text: 'OK' }]
-      );
-      
-      setLongPressedReport(null);
-    } catch (error) {
-      console.error('[Host] Failed to share report:', error);
-      Alert.alert('Error', 'Failed to share report. Please try again.');
-      setLongPressedReport(null);
-    }
-  };
-
-  const handleUnsharePress = (report) => {
-    setReportToUnshare(report);
-  };
-
-  const confirmUnshare = async () => {
-    if (!reportToUnshare) return;
-    
-    try {
-      console.log('[Host] Unsharing report:', reportToUnshare._id);
-      
-      await removeHostedReport(reportToUnshare._id);
-      await loadHostedReports();
-      
-      Alert.alert(
-        'Report Unshared',
-        'This report is no longer shared with your Wi-Fi Direct group.',
-        [{ text: 'OK' }]
-      );
-      
-      setReportToUnshare(null);
-    } catch (error) {
-      console.error('[Host] Failed to unshare report:', error);
-      Alert.alert('Error', 'Failed to unshare report. Please try again.');
-      setReportToUnshare(null);
-    }
+    navigation.navigate('Home', {
+      highlightId: item._id,
+      report: item,
+      latitude: item.latitude || item.location?.latitude,
+      longitude: item.longitude || item.location?.longitude
+    });
   };
 
   const acknowledge = async (id, isOfflineReport, isHostReport, isHostedReport) => {
     try {
       if (busyId === id) return;
+
+      const isHosting = isProxyActive();
+      // Allow update if hosting OR if connected to a host (fromHost reports)
+      if (!isHosting && isHostedReport && !isHostReport) {
+        Alert.alert('Not Hosting', 'You cannot update hosted reports when you are not hosting the group.');
+        return;
+      }
+
       setBusyId(id);
-      
+
       const connectivity = await checkConnectivity();
-      
+
+      if (!isOfflineReport && !isHostReport && !isHostedReport && connectivity.connected) {
+        console.log('[Reports] Acknowledging online report directly to backend');
+        const backendUrl = resolveBaseURL();
+
+        let headers = {};
+        try {
+          const userInfoStr = await AsyncStorage.getItem('userInfo');
+          if (userInfoStr) {
+            const userInfo = JSON.parse(userInfoStr);
+            if (userInfo.token) {
+              headers['Authorization'] = `Bearer ${userInfo.token}`;
+            }
+          }
+        } catch (e) {
+          console.error('[Reports] Error retrieving token:', e);
+        }
+
+        await axios.put(`${backendUrl}/reports/${id}/acknowledge`, {}, {
+          timeout: 5000,
+          headers: headers
+        });
+
+        await load(false);
+        setBusyId(null);
+        return;
+      }
+
       if (!isOfflineReport && !isHostReport && !isHostedReport && connectivity.isWifiDirectHost) {
         console.log('[Reports] Updating online report through host proxy');
         try {
@@ -525,7 +685,7 @@ const ReportsScreen = () => {
           console.error('[Reports] Failed to update through host:', err.message);
         }
       }
-      
+
       if (isHostedReport || isOfflineReport || isHostReport) {
         await updateOfflineReportStatus(id, 'ACKNOWLEDGED', user);
         await load(false);
@@ -544,10 +704,93 @@ const ReportsScreen = () => {
   const updateStatus = async (id, status, isOfflineReport, isHostReport, isHostedReport) => {
     try {
       if (busyId === id) return;
+
+      const isHosting = isProxyActive();
+      // Allow update if hosting OR if connected to a host (fromHost reports)
+      if (!isHosting && isHostedReport && !isHostReport) {
+        Alert.alert('Not Hosting', 'You cannot update hosted reports when you are not hosting the group.');
+        return;
+      }
+
       setBusyId(id);
-      
+
       const connectivity = await checkConnectivity();
-      
+
+      if (!isOfflineReport && !isHostReport && !isHostedReport && connectivity.connected) {
+        console.log('[Reports] Updating status directly to backend');
+        const backendUrl = resolveBaseURL();
+
+        let headers = {};
+        try {
+          const userInfoStr = await AsyncStorage.getItem('userInfo');
+          if (userInfoStr) {
+            const userInfo = JSON.parse(userInfoStr);
+            if (userInfo.token) {
+              headers['Authorization'] = `Bearer ${userInfo.token}`;
+            }
+          }
+        } catch (e) {
+          console.error('[Reports] Error retrieving token:', e);
+        }
+
+        await axios.put(`${backendUrl}/reports/${id}/status`, { status }, {
+          timeout: 5000,
+          headers: headers
+        });
+
+        setReports(prev => prev.map(r => {
+          if (r._id !== id) return r;
+          const sh = Array.isArray(r.statusHistory) ? [...r.statusHistory] : [];
+          const exists = sh.some(h => h.status === status && h.updatedBy && h.updatedBy._id === user?._id);
+          if (!exists) {
+            sh.push({
+              status,
+              updatedBy: {
+                _id: user?._id,
+                firstName: user?.firstName,
+                lastName: user?.lastName,
+                role: user?.role
+              },
+              updatedAt: new Date().toISOString(),
+              timestamp: new Date().toISOString(),
+              syncedToBackend: true
+            });
+          }
+          return { ...r, status, statusHistory: sh };
+        }));
+
+        if (isProxyActive()) {
+          const shared = hostedReports.find(hr => hr._id === id);
+          if (shared) {
+            const sh = Array.isArray(shared.statusHistory) ? [...shared.statusHistory] : [];
+            const exists = sh.some(h => h.status === status && h.updatedBy && h.updatedBy._id === user?._id);
+            if (!exists) {
+              sh.push({
+                status,
+                updatedBy: {
+                  _id: user?._id,
+                  firstName: user?.firstName,
+                  lastName: user?.lastName,
+                  role: user?.role
+                },
+                updatedAt: new Date().toISOString(),
+                timestamp: new Date().toISOString(),
+                syncedToBackend: true
+              });
+              await updateHostedReport(id, { status, statusHistory: sh });
+              try {
+                updateHostedReportInMemory(id, { status, statusHistory: sh });
+                broadcastHostedStatusUpdate(id);
+              } catch (e) { }
+            }
+          }
+        }
+
+        await load(false);
+        setBusyId(null);
+        return;
+      }
+
       if (!isOfflineReport && !isHostReport && !isHostedReport && connectivity.isWifiDirectHost) {
         console.log('[Reports] Updating online report through host proxy');
         try {
@@ -559,7 +802,7 @@ const ReportsScreen = () => {
           console.error('[Reports] Failed to update through host:', err.message);
         }
       }
-      
+
       if (isHostedReport || isOfflineReport || isHostReport) {
         await updateOfflineReportStatus(id, status, user);
         await load(false);
@@ -576,16 +819,21 @@ const ReportsScreen = () => {
   };
 
   const toggleViewMode = () => {
+    if (busyId === 'toggle') return;
+    setBusyId('toggle');
+
     setTodayPage(1);
     setEarlierPage(1);
-    
+
     if (viewMode === 'online') {
       setViewMode('host');
     } else if (viewMode === 'host') {
-      setViewMode('offline');
+      setViewMode('history');
     } else {
       setViewMode('online');
     }
+
+    setTimeout(() => setBusyId(null), 300);
   };
 
   const getViewModeIcon = () => {
@@ -594,8 +842,8 @@ const ReportsScreen = () => {
         return { name: 'cloud-done', color: '#4caf50' };
       case 'host':
         return { name: 'wifi', color: '#2196f3' };
-      case 'offline':
-        return { name: 'cloud-offline', color: '#ff9800' };
+      case 'history':
+        return { name: 'time', color: '#9c27b0' };
       default:
         return { name: 'cloud-done', color: '#4caf50' };
     }
@@ -607,8 +855,8 @@ const ReportsScreen = () => {
         return 'Online';
       case 'host':
         return 'Host';
-      case 'offline':
-        return 'Offline';
+      case 'history':
+        return 'My Reports';
       default:
         return 'Online';
     }
@@ -616,44 +864,48 @@ const ReportsScreen = () => {
 
   const renderItem = ({ item }) => {
     const isSyncing = syncingReports.has(item._id);
-    const isOfflineReport = item.isOffline && !item.fromHost && !item.hostedInGroup;
-    const isHostReport = item.fromHost;
-    const isHostedReport = item.hostedInGroup;
-    const isSharedFromOnline = item.sharedFromOnline === true;
-    const isPersistentShare = item._isPersistentShare === true;
-    const isHosting = isProxyActive();
-    
-    const isBeingHosted = isHosting && viewMode === 'online' && hostedReports.some(r => r._id === item._id);
-    
+
+    // 1. Determine the source/type of report
+    const isHostReport = item.fromHost === true;
+    const isHostedReport = item.hostedInGroup === true;
+    // An offline report is one that is specifically local and not from a host or being hosted for others
+    const isOfflineReport = (item.isOffline === true || String(item._id).startsWith('offline_')) && !isHostReport && !isHostedReport;
+
+    // 2. Determine if it needs sync (only for My Reports or Hosted reports)
+    const needsSync = !item.syncedToBackend && (isOfflineReport || isHostedReport) && viewMode !== 'online';
+
     return (
       <Pressable
-        onPressIn={() => {
-          if (isHosting && viewMode === 'online') {
-            handleLongPressStart(item);
-          }
-        }}
-        onPressOut={() => {
-          handleLongPressEnd();
-        }}
         onPress={() => handleCardPress(item)}
         style={[
           styles.card,
           isOfflineReport && styles.offlineCard,
           isHostReport && styles.hostCard,
-          isHostedReport && !isSharedFromOnline && styles.hostedCard,
-          isSharedFromOnline && styles.sharedCard,
-          isBeingHosted && styles.beingHostedCard
+          isHostedReport && styles.hostedCard
         ]}
       >
-        {isOfflineReport && (
-          <View style={styles.offlineBadge}>
-            <Ionicons name="cloud-offline" size={14} color="#fff" />
-            <Text style={styles.offlineBadgeText}>
-              {item.syncedToBackend ? 'Synced to Backend' : 'Pending Sync'}
-            </Text>
+        {/* MY REPORTS (OFFLINE) BADGE */}
+        {isOfflineReport && viewMode !== 'online' && (
+          <View style={styles.rowBetween}>
+            <View style={styles.offlineBadge}>
+              <Ionicons name="cloud-offline" size={14} color="#fff" />
+              <Text style={styles.offlineBadgeText}>
+                {item.syncedToBackend ? 'Synced to Backend' : 'Pending Sync'}
+              </Text>
+            </View>
+            {needsSync && !isSyncing && (
+              <TouchableOpacity
+                style={styles.syncNowBtn}
+                onPress={() => syncSingleReport(item._id)}
+              >
+                <Ionicons name="sync" size={14} color="#2196f3" />
+                <Text style={styles.syncNowText}>Sync Now</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
+        {/* HOST REPORT BADGE (Received from someone else) */}
         {isHostReport && (
           <View style={styles.hostBadge}>
             <Ionicons name="wifi" size={14} color="#fff" />
@@ -663,71 +915,64 @@ const ReportsScreen = () => {
           </View>
         )}
 
-        {isHostedReport && !isSharedFromOnline && (
-          <View style={styles.hostedBadge}>
-            <Ionicons name="radio" size={14} color="#fff" />
-            <Text style={styles.hostedBadgeText}>
-              Hosted in Group {item.syncedToBackend ? '• Synced Online' : '• Pending Sync'}
-            </Text>
-          </View>
-        )}
-
-        {isSharedFromOnline && (
-          <View style={styles.sharedBadge}>
-            <Ionicons name="share-social" size={14} color="#fff" />
-            <Text style={styles.sharedBadgeText}>
-              Shared from Online • Real-time Updates {isPersistentShare ? '• Persistent' : ''}
-            </Text>
-            {isHosting && viewMode === 'host' && isPersistentShare && (
-              <TouchableOpacity 
-                onPress={() => handleUnsharePress(item)}
-                style={styles.unshareButton}
+        {/* HOSTED REPORT BADGE (I am the host) */}
+        {isHostedReport && viewMode !== 'online' && (
+          <View style={styles.rowBetween}>
+            <View style={styles.hostedBadge}>
+              <Ionicons name="radio" size={14} color="#fff" />
+              <Text style={styles.hostedBadgeText}>
+                Hosted in Group {item.syncedToBackend ? '• Synced Online' : '• Pending Sync'}
+              </Text>
+            </View>
+            {needsSync && (
+              <TouchableOpacity
+                style={[styles.syncNowBtn, isSyncing && styles.syncNowBtnDisabled]}
+                onPress={() => syncSingleReport(item._id)}
+                disabled={isSyncing}
               >
-                <Ionicons name="close-circle" size={18} color="#fff" />
+                {isSyncing ? (
+                  <ActivityIndicator size="small" color="#aaa" />
+                ) : (
+                  <Ionicons name="sync" size={14} color="#2196f3" />
+                )}
+                <Text style={[styles.syncNowText, isSyncing && styles.syncNowTextDisabled]}>
+                  {isSyncing ? 'Syncing...' : 'Sync Now'}
+                </Text>
               </TouchableOpacity>
             )}
           </View>
         )}
 
-        {isBeingHosted && (
-          <View style={styles.beingHostedBadge}>
-            <Ionicons name="share-social" size={14} color="#fff" />
-            <Text style={styles.beingHostedBadgeText}>
-              Sharing with Group
-            </Text>
-          </View>
-        )}
-        
         {isSyncing && (
           <View style={styles.syncingBadge}>
             <ActivityIndicator size="small" color="#fff" />
             <Text style={styles.syncingText}>Syncing...</Text>
           </View>
         )}
-        
+
         <View style={styles.row}>
           <Text style={[styles.type, { color: typeColor(item.type) }]}>{item.type} Emergency</Text>
           <View style={[styles.status, { backgroundColor: statusColor(item.status) }]}>
             <Text style={styles.statusText}>{item.status}</Text>
           </View>
         </View>
-        
+
         <Text style={styles.time}>
           Reported: {new Date(item.createdAt).toLocaleString()}
         </Text>
-        
+
         {item.user && (
           <Text style={styles.reporter}>
             Reporter: {item.user.lastName}, {item.user.firstName} ({item.user.role})
           </Text>
         )}
-        
+
         {item.description && (
           <Text style={styles.description} numberOfLines={2}>
             {item.description}
           </Text>
         )}
-        
+
         <View style={styles.badgesRow}>
           {(() => {
             const sh = Array.isArray(item.statusHistory) ? item.statusHistory : [];
@@ -771,7 +1016,7 @@ const ReportsScreen = () => {
             );
           })()}
         </View>
-        
+
         <View style={styles.actions}>
           {(() => {
             if (item.status === 'RESOLVED') return null;
@@ -801,9 +1046,9 @@ const ReportsScreen = () => {
             }
             if (!label) return null;
             return (
-              <TouchableOpacity 
-                style={style} 
-                onPress={onPress} 
+              <TouchableOpacity
+                style={style}
+                onPress={onPress}
                 disabled={busyId === item._id || isSyncing}
               >
                 {busyId === item._id ? (
@@ -821,53 +1066,77 @@ const ReportsScreen = () => {
 
   let displayReports = [];
   const isHosting = isProxyActive();
-  
+
   if (viewMode === 'online') {
     displayReports = reports;
   } else if (viewMode === 'host') {
+    // Correct logic for Host view mode:
     if (isHosting) {
+      // 1. If I am the HOST, show reports I am hosting for others (hostedInGroup === true)
       displayReports = hostedReports.filter(r => r.hostedInGroup === true);
-    } else {
+    } else if (isConnectedToHost) {
+      // 2. If I am a CLIENT, show reports fetched from the host (fromHost === true)
       displayReports = hostReports.filter(r => r.fromHost === true);
+    } else {
+      // 3. Not hosting and not connected - show my own hosted reports from history if any
+      displayReports = hostedReports.filter(r => r.hostedInGroup === true);
     }
-  } else if (viewMode === 'offline') {
-    displayReports = offlineReports.filter(r => !r.fromHost && !r.hostedInGroup);
+  } else if (viewMode === 'history') {
+    displayReports = offlineReports;
   }
-  
+
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  
+
   const allTodayReports = displayReports.filter((r) => new Date(r.createdAt) >= today);
   const allEarlierReports = displayReports.filter((r) => new Date(r.createdAt) < today);
-  
+
   const todayReports = allTodayReports.slice(0, todayPage * ITEMS_PER_PAGE);
   const earlierReports = allEarlierReports.slice(0, earlierPage * ITEMS_PER_PAGE);
-  
+
   const hasMoreToday = allTodayReports.length > todayReports.length;
   const hasMoreEarlier = allEarlierReports.length > earlierReports.length;
 
-  const offlineCount = offlineReports.filter(r => !r.syncedToBackend && !r.fromHost && !r.hostedInGroup).length;
-  const sharedCount = hostedReports.filter(r => r._isPersistentShare).length;
+  // Calculate unsynced count from actual stored offline reports, not display state
+  const getUnsyncedCount = async () => {
+    try {
+      const storedOffline = await getStoredOfflineReports();
+      const hostedReportsLocal = await getHostedReports();
+      return storedOffline.filter(r => !r.syncedToBackend).length +
+        hostedReportsLocal.filter(r => !r.syncedToBackend).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const [unsyncedCount, setUnsyncedCount] = useState(0);
+
+  useEffect(() => {
+    if (viewMode === 'history') {
+      getUnsyncedCount().then(setUnsyncedCount);
+    }
+  }, [viewMode, offlineReports]);
+
   const iconData = getViewModeIcon();
 
   const isLoading = !initialLoadComplete && (
-    (viewMode === 'online' && loadingOnline) || 
-    (viewMode === 'host' && loadingHost) || 
-    (viewMode === 'offline' && loadingOffline)
+    (viewMode === 'online' && loadingOnline) ||
+    (viewMode === 'host' && loadingHost) ||
+    (viewMode === 'history' && loadingHistory)
   );
 
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.headerRow}>
         <Text style={styles.title}>Emergency Reports</Text>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.viewModeIndicator, { borderColor: iconData.color }]}
           onPress={toggleViewMode}
         >
-          <Ionicons 
-            name={iconData.name} 
-            size={16} 
-            color={iconData.color} 
+          <Ionicons
+            name={iconData.name}
+            size={16}
+            color={iconData.color}
           />
           <Text style={[styles.viewModeText, { color: iconData.color }]}>
             {getViewModeLabel()}
@@ -875,15 +1144,6 @@ const ReportsScreen = () => {
         </TouchableOpacity>
       </View>
 
-      {isHosting && viewMode === 'online' && (
-        <View style={[styles.offlineNotice, { backgroundColor: '#e8f5e9', borderColor: '#4caf50' }]}>
-          <Ionicons name="information-circle" size={20} color="#4caf50" />
-          <Text style={[styles.offlineNoticeText, { color: '#2e7d32' }]}>
-            Long-press any report for 2.5s to share it with your Wi-Fi Direct group. {sharedCount > 0 && `Currently sharing ${sharedCount} report${sharedCount > 1 ? 's' : ''}.`}
-          </Text>
-        </View>
-      )}
-      
       {viewMode === 'online' && isOffline && (
         <View style={styles.offlineNotice}>
           <Ionicons name="information-circle" size={20} color="#ff9800" />
@@ -892,16 +1152,16 @@ const ReportsScreen = () => {
           </Text>
         </View>
       )}
-      
+
       {viewMode === 'host' && isHosting && (
         <View style={[styles.offlineNotice, { backgroundColor: '#e8f5e9', borderColor: '#4caf50' }]}>
           <Ionicons name="radio" size={20} color="#4caf50" />
           <Text style={[styles.offlineNoticeText, { color: '#2e7d32' }]}>
-            Reports hosted in your Wi-Fi Direct group. Shared reports receive real-time updates. Tap 'X' to unshare.
+            Reports hosted in your Wi-Fi Direct group. These are shared with connected clients.
           </Text>
         </View>
       )}
-      
+
       {viewMode === 'host' && !isHosting && isConnectedToHost && (
         <View style={[styles.offlineNotice, { backgroundColor: '#e3f2fd', borderColor: '#2196f3' }]}>
           <Ionicons name="wifi" size={20} color="#2196f3" />
@@ -910,16 +1170,16 @@ const ReportsScreen = () => {
           </Text>
         </View>
       )}
-      
-      {viewMode === 'offline' && (
-        <View style={styles.offlineNotice}>
-          <Ionicons name="cloud-offline" size={20} color="#ff9800" />
-          <Text style={[styles.offlineNoticeText, { color: '#e65100' }]}>
-            Showing your offline reports. {offlineCount > 0 ? `${offlineCount} pending sync.` : 'All synced.'}
+
+      {viewMode === 'history' && (
+        <View style={[styles.offlineNotice, { backgroundColor: '#f3e5f5', borderColor: '#9c27b0' }]}>
+          <Ionicons name="time" size={20} color="#9c27b0" />
+          <Text style={[styles.offlineNoticeText, { color: '#6a1b9a' }]}>
+            All reports submitted by you. {unsyncedCount > 0 ? `${unsyncedCount} pending sync.` : 'All synced.'}
           </Text>
         </View>
       )}
-      
+
       {isLoading && (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="small" color="#2196f3" />
@@ -928,7 +1188,7 @@ const ReportsScreen = () => {
           </Text>
         </View>
       )}
-      
+
       <SectionList
         sections={[
           { title: 'Today', data: todayReports, hasMore: hasMoreToday, pageType: 'today' },
@@ -971,7 +1231,7 @@ const ReportsScreen = () => {
               <Text style={styles.emptyText}>
                 {viewMode === 'online' && 'No online reports'}
                 {viewMode === 'host' && (isHosting ? 'No hosted reports in this group' : 'No host reports')}
-                {viewMode === 'offline' && 'No offline reports'}
+                {viewMode === 'history' && 'No reports submitted yet'}
               </Text>
               {viewMode === 'online' && isOffline && (
                 <Text style={styles.emptySubText}>
@@ -985,65 +1245,18 @@ const ReportsScreen = () => {
               )}
               {viewMode === 'host' && isHosting && (
                 <Text style={styles.emptySubText}>
-                  Reports submitted by clients or shared online reports will appear here
+                  Reports submitted by clients will appear here
+                </Text>
+              )}
+              {viewMode === 'history' && (
+                <Text style={styles.emptySubText}>
+                  Submit your first emergency report to see it here
                 </Text>
               )}
             </View>
           )
         }
       />
-
-      {longPressedReport && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Ionicons name="share-social" size={48} color="#4caf50" />
-            <Text style={styles.modalTitle}>Share This Report?</Text>
-            <Text style={styles.modalText}>
-              Share this {longPressedReport.type} emergency report with connected clients in your Wi-Fi Direct group? It will receive real-time updates from the backend.
-            </Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalCancelButton]}
-                onPress={() => setLongPressedReport(null)}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalConfirmButton]}
-                onPress={confirmHostReport}
-              >
-                <Text style={styles.modalConfirmText}>Share Report</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
-
-      {reportToUnshare && (
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Ionicons name="close-circle" size={48} color="#f44336" />
-            <Text style={styles.modalTitle}>Stop Sharing Report?</Text>
-            <Text style={styles.modalText}>
-              Stop sharing this {reportToUnshare.type} emergency report with your Wi-Fi Direct group? Clients will no longer see updates.
-            </Text>
-            <View style={styles.modalButtons}>
-              <TouchableOpacity
-                style={[styles.modalButton, styles.modalCancelButton]}
-                onPress={() => setReportToUnshare(null)}
-              >
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.modalButton, { backgroundColor: '#f44336' }]}
-                onPress={confirmUnshare}
-              >
-                <Text style={styles.modalConfirmText}>Stop Sharing</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      )}
     </SafeAreaView>
   );
 };
@@ -1052,13 +1265,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff', padding: 16 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
   title: { fontSize: 22, fontWeight: 'bold' },
-  viewModeIndicator: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#fff', 
-    paddingHorizontal: 12, 
-    paddingVertical: 8, 
-    borderRadius: 12, 
+  viewModeIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 12,
     borderWidth: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
@@ -1067,15 +1280,15 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   viewModeText: { fontSize: 13, fontWeight: 'bold', marginLeft: 6 },
-  offlineNotice: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#fff3e0', 
-    padding: 12, 
-    borderRadius: 8, 
-    marginBottom: 12, 
-    borderWidth: 1, 
-    borderColor: '#ffb300' 
+  offlineNotice: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fff3e0',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#ffb300'
   },
   offlineNoticeText: { flex: 1, fontSize: 13, color: '#e65100', marginLeft: 8 },
   loadingContainer: {
@@ -1095,18 +1308,18 @@ const styles = StyleSheet.create({
   },
   sectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#424242' },
   stickyHeader: { backgroundColor: '#fff', paddingVertical: 6 },
-  card: { 
-    backgroundColor: '#fff', 
-    borderWidth: 1, 
-    borderColor: '#eee', 
-    borderRadius: 12, 
-    padding: 12, 
-    marginBottom: 10 
+  card: {
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#eee',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10
   },
-  offlineCard: { 
-    backgroundColor: '#fafafa', 
-    borderColor: '#ff9800', 
-    borderWidth: 2 
+  offlineCard: {
+    backgroundColor: '#fafafa',
+    borderColor: '#ff9800',
+    borderWidth: 2
   },
   hostCard: {
     backgroundColor: '#f5f9ff',
@@ -1118,25 +1331,15 @@ const styles = StyleSheet.create({
     borderColor: '#4caf50',
     borderWidth: 2
   },
-  sharedCard: {
-    backgroundColor: '#fff9e6',
-    borderColor: '#ffa726',
-    borderWidth: 2
-  },
-  beingHostedCard: {
-    backgroundColor: '#fef5e7',
-    borderColor: '#f39c12',
-    borderWidth: 2
-  },
-  offlineBadge: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    backgroundColor: '#ff9800', 
-    paddingHorizontal: 8, 
-    paddingVertical: 4, 
-    borderRadius: 8, 
-    alignSelf: 'flex-start', 
-    marginBottom: 8 
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ff9800',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignSelf: 'flex-start',
+    marginBottom: 8
   },
   offlineBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
   hostBadge: {
@@ -1161,32 +1364,25 @@ const styles = StyleSheet.create({
     marginBottom: 8
   },
   hostedBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
-  sharedBadge: {
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  syncNowBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#ffa726',
-    paddingHorizontal: 8,
+    backgroundColor: '#fff',
+    paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginBottom: 8
+    borderWidth: 1,
+    borderColor: '#2196f3'
   },
-  sharedBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold', marginLeft: 4, flex: 1 },
-  unshareButton: {
-    marginLeft: 8,
-    padding: 2
+  syncNowText: { color: '#2196f3', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
+  syncNowBtnDisabled: {
+    borderColor: '#e0e0e0',
+    backgroundColor: '#f5f5f5',
   },
-  beingHostedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#f39c12',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    alignSelf: 'flex-start',
-    marginBottom: 8
+  syncNowTextDisabled: {
+    color: '#aaa',
   },
-  beingHostedBadgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold', marginLeft: 4 },
   syncingBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1236,66 +1432,6 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', justifyContent: 'center', paddingVertical: 60 },
   emptyText: { fontSize: 16, color: '#999', marginTop: 12, fontWeight: '600' },
   emptySubText: { fontSize: 13, color: '#bbb', marginTop: 4, textAlign: 'center', paddingHorizontal: 40 },
-  modalOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContent: {
-    backgroundColor: '#fff',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    maxWidth: 400,
-    width: '100%',
-  },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#333',
-    marginTop: 16,
-    marginBottom: 8,
-  },
-  modalText: {
-    fontSize: 14,
-    color: '#666',
-    textAlign: 'center',
-    marginBottom: 24,
-  },
-  modalButtons: {
-    flexDirection: 'row',
-    gap: 12,
-    width: '100%',
-  },
-  modalButton: {
-    flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  modalCancelButton: {
-    backgroundColor: '#f5f5f5',
-  },
-  modalConfirmButton: {
-    backgroundColor: '#4caf50',
-  },
-  modalCancelText: {
-    color: '#666',
-    fontWeight: '600',
-    fontSize: 14,
-  },
-  modalConfirmText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 14,
-  },
 });
 
 export default ReportsScreen;

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Platform, ActivityIndicator, PermissionsAndroid, ToastAndroid, DeviceEventEmitter } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Alert, Platform, ActivityIndicator, PermissionsAndroid, ToastAndroid, DeviceEventEmitter, Modal } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
+import io from 'socket.io-client';
 import { CameraView, Camera } from 'expo-camera';
 import QRCode from 'react-native-qrcode-svg';
 import * as IntentLauncher from 'expo-intent-launcher';
@@ -21,6 +22,7 @@ import {
   getConnectionInfo 
 } from 'react-native-wifi-p2p';
 import * as Location from 'expo-location';
+import NetInfo from '@react-native-community/netinfo';
 import api, { BASE_URL, initApiConfig, updateApiConfig, setWifiDirectConnection } from '../services/api';
 import { hasPending, getPendingCount, clearIfAllSent, syncToBackend, drainClientToHost } from '../services/offline';
 import Constants from 'expo-constants';
@@ -62,6 +64,9 @@ const WifiDirectScreen = () => {
   const [lanUrl, setLanUrl] = useState(BASE_URL);
   const [peerIdentities, setPeerIdentities] = useState({});
   const [hostReady, setHostReady] = useState(false);
+  const [proxyConnecting, setProxyConnecting] = useState(false);
+  const [showHotspotModal, setShowHotspotModal] = useState(false);
+  const [isOnline, setIsOnline] = useState(false);
   const hostDeviceName = Constants?.deviceName || 'This Device';
   const proxySetRef = React.useRef(false);
  
@@ -121,6 +126,15 @@ const WifiDirectScreen = () => {
 
   useEffect(() => {
     (async () => {
+      try {
+        const ni = await NetInfo.fetch();
+        const online = !!(ni?.isConnected && ni?.isInternetReachable);
+        setIsOnline(online);
+        if (online && !connected && !connectionInfo?.groupFormed) {
+          setShowHotspotModal(true);
+        }
+      } catch {}
+
       // Runtime permissions (Android 13+: NEARBY_WIFI_DEVICES + Fine Location)
       try {
         if (Platform.OS === 'android') {
@@ -325,6 +339,22 @@ const WifiDirectScreen = () => {
     } catch {}
   };
 
+  const openHotspotSettings = async () => {
+    try {
+      if (Platform.OS === 'android') {
+        try {
+          await IntentLauncher.startActivityAsync('android.settings.TETHER_SETTINGS');
+          return;
+        } catch {}
+        try {
+          await IntentLauncher.startActivityAsync('android.settings.WIFI_AP_SETTINGS');
+          return;
+        } catch {}
+        await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.WIFI_SETTINGS);
+      }
+    } catch {}
+  };
+
   const openLocationSettings = async () => {
     try {
       if (Platform.OS === 'android') {
@@ -359,6 +389,16 @@ const WifiDirectScreen = () => {
         { 
           text: 'Start Hosting', 
           onPress: async () => {
+            try {
+              const ps = await Location.getProviderStatusAsync();
+              if (!ps?.locationServicesEnabled) {
+                Alert.alert('Enable Location', 'Location services must be enabled for Wi‑Fi Direct.', [
+                  { text: 'Open Settings', onPress: () => openLocationSettings() },
+                  { text: 'OK', style: 'cancel' }
+                ]);
+                return;
+              }
+            } catch {}
             setMode('host');
             setHostReady(false);
             try {
@@ -417,6 +457,22 @@ const WifiDirectScreen = () => {
                 if (info.groupFormed) {
                   setConnected(true);
                   groupFormed = true;
+
+                  // Notify backend about Wi-Fi group start for push notifications
+                  try {
+                    const socketUrl = BASE_URL.replace(/\/api$/, '');
+                    if (!socketUrl.includes('192.168.49.1')) { // Only if not already pointing to a P2P host
+                      const tempSocket = io(socketUrl, { transports: ['websocket'], timeout: 5000 });
+                      tempSocket.emit('wifi:group_started', {
+                        userId: user?._id,
+                        groupName: hostDeviceName
+                      });
+                      // Give it a moment to send then disconnect
+                      setTimeout(() => tempSocket.disconnect(), 2000);
+                    }
+                  } catch (socketErr) {
+                    console.log('[Host] Failed to notify backend of group start:', socketErr);
+                  }
                   
                   if (hostStartTs && setupMs == null) {
                     try { setSetupMs(Date.now() - hostStartTs); } catch {}
@@ -506,6 +562,16 @@ const WifiDirectScreen = () => {
   const handleConnectMode = async () => {
     setMode('connect');
     try {
+      try {
+        const ps = await Location.getProviderStatusAsync();
+        if (!ps?.locationServicesEnabled) {
+          Alert.alert('Enable Location', 'Location services must be enabled for Wi‑Fi Direct.', [
+            { text: 'Open Settings', onPress: () => openLocationSettings() },
+            { text: 'OK' }
+          ]);
+          return;
+        }
+      } catch {}
       await startDiscoveringPeers();
       setIsDiscovering(true);
       discoveringActive = true;
@@ -945,6 +1011,38 @@ const WifiDirectScreen = () => {
 
   return (
     <SafeAreaView style={styles.container}>
+      <Modal
+        visible={showHotspotModal}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowHotspotModal(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Ionicons name="wifi" size={22} color="#1976d2" />
+              <Text style={styles.modalTitle}>Share Backend via Hotspot</Text>
+            </View>
+            <Text style={styles.modalText}>
+              You are online. Share the backend using your device hotspot for better connectivity.
+            </Text>
+            <View style={styles.modalActions}>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#9e9e9e' }]} onPress={() => setShowHotspotModal(false)}>
+                <Text style={styles.modalBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: '#1976d2' }]}
+                onPress={() => {
+                  setShowHotspotModal(false);
+                  openHotspotSettings();
+                }}
+              >
+                <Text style={styles.modalBtnText}>Open Hotspot Settings</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={24} color="#000" />
@@ -1099,7 +1197,14 @@ const WifiDirectScreen = () => {
                     } catch {}
                   }
                   
-                  await removeGroup();
+                  let removed = false;
+                  for (let i = 0; i < 3 && !removed; i++) {
+                    try {
+                      await removeGroup();
+                      removed = true;
+                    } catch {}
+                    if (!removed) await new Promise(r => setTimeout(r, 800));
+                  }
                   await new Promise(r => setTimeout(r, 1000));
                   console.log('[Host] Group removed');
                   
@@ -1119,6 +1224,10 @@ const WifiDirectScreen = () => {
                   }
                 } catch (e) {
                   console.log('[Host] Error removing group:', e);
+                  Alert.alert('Stop Hosting', 'Unable to remove group. If Hotspot is ON, turn it OFF and try again.', [
+                    { text: 'Open Hotspot Settings', onPress: () => openHotspotSettings() },
+                    { text: 'OK' }
+                  ]);
                 } finally {
                   setTimeout(() => setStopping(false), 500);
                 }
@@ -1134,6 +1243,13 @@ const WifiDirectScreen = () => {
           </View>
         ) : (
           <View style={styles.connectContainer}>
+            {proxyConnecting && (
+              <View style={styles.waitingContainer}>
+                <ActivityIndicator size="large" color="#1976d2" />
+                <Text style={styles.waitingText}>Connecting to Host Proxy...</Text>
+                <Text style={styles.waitingSubText}>Please wait while we establish secure connection</Text>
+              </View>
+            )}
             {connected && connectionInfo ? (
                <View style={styles.statusCard}>
                    <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'center'}}>
@@ -1277,6 +1393,14 @@ const WifiDirectScreen = () => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', alignItems: 'center', justifyContent: 'center' },
+  modalCard: { width: '88%', backgroundColor: '#fff', borderRadius: 16, padding: 16, elevation: 6 },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
+  modalTitle: { fontSize: 16, fontWeight: 'bold', color: '#333', marginLeft: 8 },
+  modalText: { fontSize: 13, color: '#555', marginTop: 6 },
+  modalActions: { flexDirection: 'row', justifyContent: 'flex-end', marginTop: 16 },
+  modalBtn: { paddingVertical: 10, paddingHorizontal: 14, borderRadius: 10, marginLeft: 8 },
+  modalBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
   header: { flexDirection: 'row', alignItems: 'center', padding: 16, backgroundColor: '#fff', elevation: 2 },
   backBtn: { padding: 4 },
   headerTitle: { fontSize: 18, fontWeight: 'bold', marginLeft: 16 },

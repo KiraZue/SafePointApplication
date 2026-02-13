@@ -39,6 +39,8 @@ const loginUser = async (req, res) => {
     lastName: user.lastName,
     userCode: user.userCode,
     role: user.role,
+    emergencyContact: user.emergencyContact,
+    personalInfo: user.personalInfo,
     token: generateToken(user._id),
   });
 };
@@ -192,4 +194,76 @@ const setPassword = async (req, res) => {
   res.json({ message: 'Password set', userCode: user.userCode });
 };
 
-module.exports = { loginUser, registerUser, getUsers, getDeletedUsers, getChangedUsers, deleteUser, changeUserPassword, lookupByCode, setPassword };
+// @desc    Update user profile
+// @route   PUT /api/users/profile
+// @access  Private
+const updateUserProfile = async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  if (user) {
+    if (req.body.emergencyContact) {
+      user.emergencyContact = {
+        name: req.body.emergencyContact.name || user.emergencyContact?.name,
+        relation: req.body.emergencyContact.relation || user.emergencyContact?.relation,
+        number: req.body.emergencyContact.number || user.emergencyContact?.number,
+        address: req.body.emergencyContact.address || user.emergencyContact?.address,
+      };
+    }
+
+    if (req.body.personalInfo) {
+      user.personalInfo = {
+        levelGroup: req.body.personalInfo.levelGroup || user.personalInfo?.levelGroup,
+        gradeLevel: req.body.personalInfo.gradeLevel || user.personalInfo?.gradeLevel,
+        strandCourse: req.body.personalInfo.strandCourse || user.personalInfo?.strandCourse,
+        contactNumber: req.body.personalInfo.contactNumber || user.personalInfo?.contactNumber,
+      };
+    }
+
+    if (req.body.pushToken) {
+      console.log(`[Push] Updating push token for user ${user._id}: ${req.body.pushToken}`);
+      user.pushToken = req.body.pushToken;
+    }
+
+    if (req.body.lastSeenReport) {
+      user.lastSeenReport = req.body.lastSeenReport;
+    }
+
+    const updatedUser = await user.save();
+
+    res.json({
+      _id: updatedUser._id,
+      firstName: updatedUser.firstName,
+      lastName: updatedUser.lastName,
+      userCode: updatedUser.userCode,
+      role: updatedUser.role,
+      emergencyContact: updatedUser.emergencyContact,
+      personalInfo: updatedUser.personalInfo,
+      token: generateToken(updatedUser._id),
+    });
+  } else {
+    res.status(404).json({ message: 'User not found' });
+  }
+};
+
+// @desc    Get user profile
+// @route   GET /api/users/me
+// @access  Private
+const getUserProfile = async (req, res) => {
+  const user = await User.findById(req.user._id);
+
+  if (user) {
+    res.json({
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      userCode: user.userCode,
+      role: user.role,
+      emergencyContact: user.emergencyContact,
+      personalInfo: user.personalInfo,
+    });
+  } else {
+    res.status(404).json({ message: 'User not found' });
+  }
+};
+
+module.exports = { loginUser, registerUser, getUsers, getDeletedUsers, getChangedUsers, deleteUser, changeUserPassword, lookupByCode, setPassword, updateUserProfile, getUserProfile };
