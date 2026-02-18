@@ -58,7 +58,7 @@ const HotlinesScreen = () => {
     } else if (activeType === 'Accident') {
       preferred = 'Medical';
     }
-    
+
     if (!preferred || !CATEGORIES[preferred]) return sectionsBase;
     const first = sectionsBase.find((s) => s.title === preferred);
     const rest = sectionsBase.filter((s) => s.title !== preferred);
@@ -69,7 +69,7 @@ const HotlinesScreen = () => {
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.backButton}
           onPress={() => navigation.goBack()}
           activeOpacity={0.7}
@@ -83,8 +83,8 @@ const HotlinesScreen = () => {
       </View>
 
       {/* Quick Dial 911 Button */}
-      <TouchableOpacity 
-        style={styles.emergencyButton} 
+      <TouchableOpacity
+        style={styles.emergencyButton}
         onPress={() => call('911')}
         activeOpacity={0.8}
       >
@@ -111,7 +111,7 @@ const HotlinesScreen = () => {
           if (activeType === 'Earthquake') mappedCategory = 'Disaster';
           else if (activeType === 'Security') mappedCategory = 'Police';
           else if (activeType === 'Accident') mappedCategory = 'Medical';
-          
+
           const isActiveSection = title === mappedCategory;
           return (
             <View style={[
@@ -140,10 +140,10 @@ const HotlinesScreen = () => {
           if (activeType === 'Earthquake') mappedCategory = 'Disaster';
           else if (activeType === 'Security') mappedCategory = 'Police';
           else if (activeType === 'Accident') mappedCategory = 'Medical';
-          
+
           const isActiveSection = section.title === mappedCategory;
           return (
-            <TouchableOpacity 
+            <TouchableOpacity
               style={[
                 styles.item,
                 isActiveSection && styles.itemHighlighted
@@ -152,9 +152,7 @@ const HotlinesScreen = () => {
               activeOpacity={0.7}
             >
               <View style={styles.itemLeft}>
-                <View style={[styles.itemIconContainer, { backgroundColor: categoryStyle.bgColor }]}>
-                  <Ionicons name={item.icon} size={22} color={categoryStyle.color} />
-                </View>
+
                 <View style={styles.itemTextContainer}>
                   <Text style={styles.itemName}>{item.name}</Text>
                   <View style={styles.numberContainer}>
@@ -176,11 +174,11 @@ const HotlinesScreen = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
+  container: {
+    flex: 1,
     backgroundColor: '#F9FAFB',
   },
-  
+
   // Header Styles
   header: {
     flexDirection: 'row',
@@ -203,8 +201,8 @@ const styles = StyleSheet.create({
   headerTextContainer: {
     flex: 1,
   },
-  title: { 
-    fontSize: 24, 
+  title: {
+    fontSize: 24,
     fontWeight: '700',
     color: '#111827',
     letterSpacing: -0.5,
@@ -276,8 +274,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 12,
   },
-  sectionTitle: { 
-    fontSize: 18, 
+  sectionTitle: {
+    fontSize: 18,
     fontWeight: '700',
     color: '#111827',
     letterSpacing: -0.3,
@@ -300,10 +298,10 @@ const styles = StyleSheet.create({
   },
 
   // List Item
-  item: { 
-    flexDirection: 'row', 
-    justifyContent: 'space-between', 
-    alignItems: 'center', 
+  item: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingVertical: 14,
     paddingHorizontal: 20,
     backgroundColor: '#fff',
@@ -331,8 +329,8 @@ const styles = StyleSheet.create({
   itemTextContainer: {
     flex: 1,
   },
-  itemName: { 
-    fontSize: 15, 
+  itemName: {
+    fontSize: 15,
     color: '#111827',
     fontWeight: '600',
     marginBottom: 4,
@@ -341,8 +339,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
   },
-  itemNumber: { 
-    fontSize: 14, 
+  itemNumber: {
+    fontSize: 14,
     color: '#6B7280',
     marginLeft: 4,
     fontWeight: '500',
@@ -359,8 +357,8 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
-  
-  listContent: { 
+
+  listContent: {
     paddingBottom: 24,
   },
 });

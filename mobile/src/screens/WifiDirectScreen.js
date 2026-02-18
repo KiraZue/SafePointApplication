@@ -7,19 +7,19 @@ import io from 'socket.io-client';
 import { CameraView, Camera } from 'expo-camera';
 import QRCode from 'react-native-qrcode-svg';
 import * as IntentLauncher from 'expo-intent-launcher';
-import { 
-  initialize, 
-  startDiscoveringPeers, 
-  stopDiscoveringPeers, 
-  subscribeOnPeersUpdates, 
-  unsubscribeFromPeersUpdates, 
-  subscribeOnConnectionInfoUpdates, 
-  unsubscribeFromConnectionInfoUpdates, 
-  connect, 
-  createGroup, 
-  removeGroup, 
-  getAvailablePeers, 
-  getConnectionInfo 
+import {
+  initialize,
+  startDiscoveringPeers,
+  stopDiscoveringPeers,
+  subscribeOnPeersUpdates,
+  unsubscribeFromPeersUpdates,
+  subscribeOnConnectionInfoUpdates,
+  unsubscribeFromConnectionInfoUpdates,
+  connect,
+  createGroup,
+  removeGroup,
+  getAvailablePeers,
+  getConnectionInfo
 } from 'react-native-wifi-p2p';
 import * as Location from 'expo-location';
 import NetInfo from '@react-native-community/netinfo';
@@ -69,7 +69,7 @@ const WifiDirectScreen = () => {
   const [isOnline, setIsOnline] = useState(false);
   const hostDeviceName = Constants?.deviceName || 'This Device';
   const proxySetRef = React.useRef(false);
- 
+
   const isBackendReachable = async () => {
     try {
       const root = BASE_URL.replace(/\/api$/, '');
@@ -85,7 +85,7 @@ const WifiDirectScreen = () => {
           const res = await fetch(urls[i], { method: 'GET', signal: controller.signal });
           clearTimeout(timeout);
           if (res && res.status >= 200 && res.status < 300) return true;
-        } catch (e) {}
+        } catch (e) { }
       }
       return false;
     } catch {
@@ -96,32 +96,32 @@ const WifiDirectScreen = () => {
   // Identify self when connected as client
   useEffect(() => {
     if (connected && mode === 'connect' && user?.fullName) {
-       const timer = setTimeout(async () => {
-          try {
-            const targetUrl = BASE_URL.includes('192.168.49.1') ? BASE_URL : 'http://192.168.49.1:8080';
-            if (targetUrl !== BASE_URL) {
-               await updateApiConfig(targetUrl);
-            }
-            await api.post('/p2p/identify', {
-               fullName: user.fullName,
-               deviceName: hostDeviceName
-            });
-            console.log('[Client] Sent identity to host');
-          } catch(e) { console.log('Identity send failed', e); }
-       }, 3000);
-       return () => clearTimeout(timer);
+      const timer = setTimeout(async () => {
+        try {
+          const targetUrl = BASE_URL.includes('192.168.49.1') ? BASE_URL : 'http://192.168.49.1:8080';
+          if (targetUrl !== BASE_URL) {
+            await updateApiConfig(targetUrl);
+          }
+          await api.post('/p2p/identify', {
+            fullName: user.fullName,
+            deviceName: hostDeviceName
+          });
+          console.log('[Client] Sent identity to host');
+        } catch (e) { console.log('Identity send failed', e); }
+      }, 3000);
+      return () => clearTimeout(timer);
     }
   }, [connected, mode, user?.fullName, hostDeviceName]);
 
   // Listen for peer identities (Host side)
   useEffect(() => {
-     const sub = DeviceEventEmitter.addListener('P2P_PEER_IDENTIFY', (data) => {
-        if (data && data.deviceName && data.fullName) {
-           console.log('[Host] Received peer identity:', data.fullName);
-           setPeerIdentities(prev => ({ ...prev, [data.deviceName]: data.fullName }));
-        }
-     });
-     return () => sub.remove();
+    const sub = DeviceEventEmitter.addListener('P2P_PEER_IDENTIFY', (data) => {
+      if (data && data.deviceName && data.fullName) {
+        console.log('[Host] Received peer identity:', data.fullName);
+        setPeerIdentities(prev => ({ ...prev, [data.deviceName]: data.fullName }));
+      }
+    });
+    return () => sub.remove();
   }, []);
 
   useEffect(() => {
@@ -133,7 +133,7 @@ const WifiDirectScreen = () => {
         if (online && !connected && !connectionInfo?.groupFormed) {
           setShowHotspotModal(true);
         }
-      } catch {}
+      } catch { }
 
       // Runtime permissions (Android 13+: NEARBY_WIFI_DEVICES + Fine Location)
       try {
@@ -160,25 +160,27 @@ const WifiDirectScreen = () => {
           wifiP2PInitialized = true;
           setIsSupported(true);
           console.log('[WiFi Direct] Initialized successfully');
+          // Additional slight delay to let Android stabilize P2P handle
+          await new Promise(r => setTimeout(r, 500));
         } catch (e) {
-          if (e && e.message && e.message.includes('initialized once')) {
+          if (e && e.message && (e.message.includes('initialized once') || e.message.includes('already initialized'))) {
             wifiP2PInitialized = true;
             setIsSupported(true);
             console.log('[WiFi Direct] Already initialized');
           } else {
             console.log("Wi-Fi Direct not supported or failed to initialize:", e);
             setIsSupported(false);
-            return;
+            // Don't return yet, try to proceed if we can
           }
         }
       } else {
         setIsSupported(true);
       }
-        
+
       // Request Camera Permissions
       const { status } = await Camera.requestCameraPermissionsAsync();
       setHasPermission(status === 'granted');
-      
+
       // Request Location Permissions
       let { status: locationStatus } = await Location.requestForegroundPermissionsAsync();
       if (locationStatus !== 'granted') {
@@ -189,12 +191,15 @@ const WifiDirectScreen = () => {
     // Restore ongoing session state on remount
     const checkConnection = async () => {
       try {
+        // Wait for initialize to definitely be done
+        if (!wifiP2PInitialized) await new Promise(r => setTimeout(r, 1000));
+
         const info = await getConnectionInfo();
         console.log('Initial Connection Info:', info);
         if (info && info.groupFormed) {
           setConnectionInfo(info);
           setConnected(true);
-          
+
           if (info.isGroupOwner) {
             setMode('host');
             hostingActive = true;
@@ -212,7 +217,7 @@ const WifiDirectScreen = () => {
         console.log('Error checking initial connection:', e);
       }
     };
-    
+
     checkConnection();
 
     setLanUrl(BASE_URL);
@@ -228,88 +233,91 @@ const WifiDirectScreen = () => {
     const connectionSubscription = subscribeOnConnectionInfoUpdates(async (info) => {
       console.log('Connection Info Update:', info);
       setConnectionInfo(info);
-      setConnected(info.groupFormed);
-      
-      if (info.groupFormed) {
+
+      const isActuallyConnected = !!info.groupFormed;
+      setConnected(isActuallyConnected);
+
+      if (isActuallyConnected) {
         if (info.isGroupOwner) {
-           setMode('host');
-           hostingActive = true;
-           
-           // Sync to backend if available
-           try {
-             const ok = await isBackendReachable();
-             if (ok) {
-               console.log('[Host] Backend reachable, syncing...');
-               await syncToBackend();
-             }
-           } catch {}
+          setMode('host');
+          hostingActive = true;
+
+          if (ensureProxy() && Proxy.isProxyActive && Proxy.isProxyActive()) {
+            setHostReady(true);
+          }
+
+          try {
+            const ok = await isBackendReachable();
+            if (ok) {
+              console.log('[Host] Backend reachable, syncing...');
+              await syncToBackend();
+            }
+          } catch { }
         } else {
-           setMode('connect');
-           
-           // CRITICAL FIX: Wait longer for host proxy and network to fully stabilize
-           console.log('[Client] Waiting for host proxy to start and network to stabilize...');
-           await new Promise(r => setTimeout(r, 7000));
-           
-           try {
-             if (!proxySetRef.current) {
-               const proxyUrl = 'http://192.168.49.1:8080';
-               
-               // Retry proxy connection up to 10 times with longer intervals
-               let reachable = false;
-               for (let attempt = 0; attempt < 10; attempt++) {
-                 try {
-                   const controller = new AbortController();
-                   const timeout = setTimeout(() => controller.abort(), 4000);
-                   const res = await fetch(`${proxyUrl}/api/health`, { 
-                     signal: controller.signal,
-                     method: 'GET'
-                   });
-                   clearTimeout(timeout);
-                   
-                   if (res && res.status >= 200 && res.status < 400) {
-                     reachable = true;
-                     console.log(`[Client] Proxy reachable on attempt ${attempt + 1}`);
-                     break;
-                   }
-                 } catch (e) {
-                   console.log(`[Client] Proxy check attempt ${attempt + 1} failed:`, e.message);
-                 }
-                 
-                 if (!reachable && attempt < 9) {
-                   await new Promise(r => setTimeout(r, 2500));
-                 }
-               }
-               
-               if (reachable) {
-                 await updateApiConfig(proxyUrl);
-                 setWifiDirectConnection(true); // CRITICAL: Set connection tracking
-                 proxySetRef.current = true;
-                 if (Platform.OS === 'android') {
-                   ToastAndroid.show('Connected to host proxy', ToastAndroid.SHORT);
-                 }
-                 console.log('[Client] Successfully connected to host proxy');
-                 try { await drainClientToHost(proxyUrl); } catch {}
-               } else {
-                 console.log('[Client] Host proxy unreachable after all attempts');
-                 if (Platform.OS === 'android') {
-                   ToastAndroid.show('Host proxy unreachable. Staying offline.', ToastAndroid.LONG);
-                 }
-               }
-             }
-           } catch(e) { 
-             console.log('[Client] Proxy URL update failed', e); 
-           }
+          setMode('connect');
+
+          // RESTORED CLIENT LOGIC
+          console.log('[Client] Waiting for host proxy to start and network to stabilize...');
+          await new Promise(r => setTimeout(r, 7000));
+
+          try {
+            if (!proxySetRef.current) {
+              const proxyUrl = 'http://192.168.49.1:8080';
+              let reachable = false;
+              for (let attempt = 0; attempt < 10; attempt++) {
+                try {
+                  const controller = new AbortController();
+                  const timeout = setTimeout(() => controller.abort(), 4000);
+                  const res = await fetch(`${proxyUrl}/api/health`, {
+                    signal: controller.signal,
+                    method: 'GET'
+                  });
+                  clearTimeout(timeout);
+                  if (res && res.status >= 200 && res.status < 400) {
+                    reachable = true;
+                    console.log(`[Client] Proxy reachable on attempt ${attempt + 1}`);
+                    break;
+                  }
+                } catch (e) { }
+
+                if (!reachable && attempt < 9) {
+                  await new Promise(r => setTimeout(r, 2500));
+                }
+              }
+
+              if (reachable) {
+                await updateApiConfig(proxyUrl);
+                setWifiDirectConnection(true);
+                proxySetRef.current = true;
+                if (Platform.OS === 'android') {
+                  ToastAndroid.show('Connected to host proxy', ToastAndroid.SHORT);
+                }
+                console.log('[Client] Successfully connected to host proxy');
+                try { await drainClientToHost(proxyUrl); } catch { }
+              }
+            }
+          } catch (e) {
+            console.log('[Client] Proxy URL update failed', e);
+          }
         }
-        
+
         if (hostStartTs && setupMs == null) {
-          try { setSetupMs(Date.now() - hostStartTs); } catch {}
+          try { setSetupMs(Date.now() - hostStartTs); } catch { }
         }
       } else {
-         // Disconnected
-         setConnected(false);
-         setWifiDirectConnection(false); // CRITICAL: Reset connection tracking
-         proxySetRef.current = false;
-         setHostReady(false);
+        // Disconnected - Preserve mode if active
+        if (hostingActive) {
+          setMode('host');
+          setHostReady(false);
+          console.log('[Host] Disconnected - Keeping Host UI active');
+        } else if (discoveringActive) {
+          setMode('connect');
+          console.log('[Client] Disconnected - Keeping Connect UI active');
+        } else {
+          setMode(null);
+          setWifiDirectConnection(false);
+        }
+        proxySetRef.current = false;
       }
     });
 
@@ -320,14 +328,14 @@ const WifiDirectScreen = () => {
         } else if (peersSubscription) {
           unsubscribeFromPeersUpdates(peersSubscription);
         }
-      } catch {}
+      } catch { }
       try {
         if (connectionSubscription && typeof connectionSubscription.remove === 'function') {
           connectionSubscription.remove();
         } else if (connectionSubscription) {
           unsubscribeFromConnectionInfoUpdates(connectionSubscription);
         }
-      } catch {}
+      } catch { }
     };
   }, []);
 
@@ -336,7 +344,7 @@ const WifiDirectScreen = () => {
       if (Platform.OS === 'android') {
         await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.WIFI_SETTINGS);
       }
-    } catch {}
+    } catch { }
   };
 
   const openHotspotSettings = async () => {
@@ -345,14 +353,14 @@ const WifiDirectScreen = () => {
         try {
           await IntentLauncher.startActivityAsync('android.settings.TETHER_SETTINGS');
           return;
-        } catch {}
+        } catch { }
         try {
           await IntentLauncher.startActivityAsync('android.settings.WIFI_AP_SETTINGS');
           return;
-        } catch {}
+        } catch { }
         await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.WIFI_SETTINGS);
       }
-    } catch {}
+    } catch { }
   };
 
   const openLocationSettings = async () => {
@@ -360,7 +368,7 @@ const WifiDirectScreen = () => {
       if (Platform.OS === 'android') {
         await IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.LOCATION_SOURCE_SETTINGS);
       }
-    } catch {}
+    } catch { }
   };
 
   // CRITICAL FIX: Open system Wi-Fi Direct settings
@@ -386,8 +394,8 @@ const WifiDirectScreen = () => {
       'Are you sure you want to start hosting a group?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Start Hosting', 
+        {
+          text: 'Start Hosting',
           onPress: async () => {
             try {
               const ps = await Location.getProviderStatusAsync();
@@ -398,30 +406,30 @@ const WifiDirectScreen = () => {
                 ]);
                 return;
               }
-            } catch {}
+            } catch { }
             setMode('host');
             setHostReady(false);
             try {
               // Comprehensive cleanup with delays
-              try { 
-                await stopDiscoveringPeers(); 
+              try {
+                await stopDiscoveringPeers();
                 await new Promise(r => setTimeout(r, 800));
-              } catch (e) {}
-              
-              try { 
-                await removeGroup(); 
+              } catch (e) { }
+
+              try {
+                await removeGroup();
                 await new Promise(r => setTimeout(r, 1200));
-              } catch (e) {}
-              
+              } catch (e) { }
+
               setIsDiscovering(false);
               setHostStartTs(Date.now());
               setSetupMs(null);
               hostingActive = true;
-              
+
               if (Platform.OS === 'android') {
                 ToastAndroid.show('Creating Wi-Fi Direct Group...', ToastAndroid.SHORT);
               }
-              
+
               // Create group with retry
               let created = false;
               for (let i = 0; i < 3 && !created; i++) {
@@ -434,26 +442,26 @@ const WifiDirectScreen = () => {
                   if (i < 2) await new Promise(res => setTimeout(res, 1500));
                 }
               }
-              
+
               if (!created) {
                 throw new Error('Failed to create group after retries');
               }
-              
+
               if (Platform.OS === 'android') {
                 ToastAndroid.show('Wi-Fi Direct Group Created', ToastAndroid.SHORT);
               }
-              
+
               // CRITICAL: Wait for initial network stabilization
               console.log('[Host] Waiting for initial network stabilization...');
               await new Promise(r => setTimeout(r, 4000));
-              
+
               // Poll for group formation with more attempts
               let groupFormed = false;
               for (let i = 0; i < 15; i++) {
                 const info = await getConnectionInfo();
                 setConnectionInfo(info);
                 console.log(`[Host] Group formation check ${i + 1}/15:`, info.groupFormed);
-                
+
                 if (info.groupFormed) {
                   setConnected(true);
                   groupFormed = true;
@@ -473,26 +481,26 @@ const WifiDirectScreen = () => {
                   } catch (socketErr) {
                     console.log('[Host] Failed to notify backend of group start:', socketErr);
                   }
-                  
+
                   if (hostStartTs && setupMs == null) {
-                    try { setSetupMs(Date.now() - hostStartTs); } catch {}
+                    try { setSetupMs(Date.now() - hostStartTs); } catch { }
                   }
-                  
+
                   // CRITICAL: Wait longer for Wi-Fi Direct network to stabilize
                   console.log('[Host] Group formed! Waiting for network interface to fully stabilize...');
                   await new Promise(r => setTimeout(r, 5000));
-                  
+
                   // CRITICAL FIX: Start proxy with verification
                   let proxyStarted = false;
-                  try { 
+                  try {
                     if (ensureProxy() && Proxy?.canStartProxy && Proxy.canStartProxy()) {
                       console.log('[Host] Starting proxy server...');
                       if (Platform.OS === 'android') {
                         ToastAndroid.show('Starting proxy server...', ToastAndroid.SHORT);
                       }
-                      
+
                       proxyStarted = await Proxy.startProxyServer();
-                      
+
                       if (proxyStarted && Proxy.isProxyActive && Proxy.isProxyActive()) {
                         console.log('[Host] Proxy server verified active');
                         setHostReady(true);
@@ -512,13 +520,13 @@ const WifiDirectScreen = () => {
                         Alert.alert('Proxy Unavailable', 'Use a custom dev client to enable proxy.');
                       }
                     }
-                  } catch(e) { 
+                  } catch (e) {
                     console.log('[Host] Proxy start error:', e);
                     if (Platform.OS === 'android') {
                       ToastAndroid.show('⚠ Proxy failed to start', ToastAndroid.SHORT);
                     }
                   }
-                  
+
                   // Sync to backend if available (even if proxy failed)
                   try {
                     const ok = await isBackendReachable();
@@ -529,18 +537,18 @@ const WifiDirectScreen = () => {
                         ToastAndroid.show('Synced to backend', ToastAndroid.SHORT);
                       }
                     }
-                  } catch {}
-                  
+                  } catch { }
+
                   break;
                 }
-                
+
                 await new Promise((res) => setTimeout(res, 1500));
               }
-              
+
               if (!groupFormed) {
                 throw new Error('Group did not form within timeout');
               }
-              
+
             } catch (err) {
               console.error('[Host] Host error:', err);
               if (Platform.OS === 'android') {
@@ -571,30 +579,30 @@ const WifiDirectScreen = () => {
           ]);
           return;
         }
-      } catch {}
+      } catch { }
       await startDiscoveringPeers();
       setIsDiscovering(true);
       discoveringActive = true;
       console.log('[Client] Discovery started');
-      
+
       // Initial peer refresh
       const refreshPeers = async () => {
         try {
           const devices = await getAvailablePeers();
           setPeers(devices.devices);
           console.log('[Client] Found', devices.devices.length, 'peers');
-        } catch (e) {}
+        } catch (e) { }
       };
 
       refreshPeers();
-      
+
     } catch (err) {
       console.error('[Client] Discovery error:', err);
       Alert.alert('Error', 'Failed to start discovery. Make sure Location is enabled.');
       setMode(null);
     }
   };
-  
+
   // Effect to manage peer polling when in connect or host mode
   useEffect(() => {
     let interval;
@@ -603,7 +611,7 @@ const WifiDirectScreen = () => {
         try {
           const devices = await getAvailablePeers();
           setPeers(devices.devices);
-        } catch (e) {}
+        } catch (e) { }
       }, 4000);
     }
     return () => {
@@ -628,11 +636,11 @@ const WifiDirectScreen = () => {
     try {
       const ps = await Location.getProviderStatusAsync();
       locationEnabled = !!ps?.locationServicesEnabled;
-    } catch {}
+    } catch { }
     try {
       const info = await getConnectionInfo();
       formed = !!info?.groupFormed;
-    } catch {}
+    } catch { }
     const msg = [
       `Initialized: ${initialized}`,
       `Location: ${locationEnabled}`,
@@ -646,10 +654,10 @@ const WifiDirectScreen = () => {
   };
 
   const repairWifiDirect = async () => {
-    try { await removeGroup(); } catch {}
-    try { await stopDiscoveringPeers(); } catch {}
+    try { await removeGroup(); } catch { }
+    try { await stopDiscoveringPeers(); } catch { }
     await new Promise(r => setTimeout(r, 800));
-    try { await startDiscoveringPeers(); } catch {}
+    try { await startDiscoveringPeers(); } catch { }
     setIsDiscovering(true);
     discoveringActive = true;
     Alert.alert('Wi‑Fi Direct', 'Discovery restarted. Try connecting again.');
@@ -662,12 +670,12 @@ const WifiDirectScreen = () => {
       if (Platform.OS === 'android') {
         ToastAndroid.show('Searching for host...', ToastAndroid.SHORT);
       }
-      
+
       // Don't stop discovery yet - we need it to find hosts
       await new Promise(r => setTimeout(r, 1000));
-      
+
       let result = null;
-      try { result = await getAvailablePeers(); } catch {}
+      try { result = await getAvailablePeers(); } catch { }
       const raw = (result && Array.isArray(result.devices)) ? result.devices : [];
       const isP2P = (p) => {
         const name = String(p.deviceName || '');
@@ -686,49 +694,49 @@ const WifiDirectScreen = () => {
         const bs = b.status === 3 ? 0 : 1;
         return (ago - bgo) || (ad - bd) || (as - bs) || an.localeCompare(bn);
       });
-      
+
       console.log('[Client] Found', sorted.length, 'potential hosts');
-      
+
       for (let i = 0; i < sorted.length && i < 6; i++) {
         const p = sorted[i];
         if (!p?.deviceAddress) continue;
-        
+
         console.log(`[Client] Trying to connect to ${p.deviceName} (${p.deviceAddress})`);
         if (Platform.OS === 'android') {
           ToastAndroid.show(`Trying ${p.deviceName}...`, ToastAndroid.SHORT);
         }
-        
+
         try {
           // Stop discovery before connecting
           if (i === 0) {
-            try { await stopDiscoveringPeers(); } catch {}
+            try { await stopDiscoveringPeers(); } catch { }
             await new Promise(r => setTimeout(r, 800));
           }
-          
+
           await connectWithTimeout(p.deviceAddress, 8000);
-          
+
           for (let k = 0; k < 10; k++) {
             const info = await getConnectionInfo();
             setConnectionInfo(info);
-            if (info?.groupFormed) { 
-              setConnected(true); 
+            if (info?.groupFormed) {
+              setConnected(true);
               if (Platform.OS === 'android') {
                 ToastAndroid.show('✓ Auto-connected successfully!', ToastAndroid.SHORT);
               }
               console.log('[Client] Auto-connected to', p.deviceName);
-              return; 
+              return;
             }
             await new Promise(r => setTimeout(r, 600));
           }
         } catch (e) {
           console.log(`[Client] Failed to connect to ${p.deviceName}:`, e.message);
         }
-        
-        try { await removeGroup(); } catch {}
+
+        try { await removeGroup(); } catch { }
         await new Promise(r => setTimeout(r, 600));
       }
-      
-      try { await startDiscoveringPeers(); } catch {}
+
+      try { await startDiscoveringPeers(); } catch { }
       setIsDiscovering(true);
       discoveringActive = true;
       Alert.alert('Wi‑Fi Direct', 'Could not auto-connect. Select a device manually or scan QR.');
@@ -745,16 +753,16 @@ const WifiDirectScreen = () => {
       }
       return;
     }
-    
+
     try {
       setConnecting(true);
-      
+
       // Cleanup sequence
-      try { 
+      try {
         await removeGroup();
         await new Promise(r => setTimeout(r, 1000));
-      } catch {}
-      
+      } catch { }
+
       // Check location
       try {
         const ps = await Location.getProviderStatusAsync();
@@ -765,62 +773,85 @@ const WifiDirectScreen = () => {
           ]);
           return;
         }
-      } catch {}
-      
+      } catch { }
+
       if (Platform.OS === 'android') {
         ToastAndroid.show('Connecting...', ToastAndroid.SHORT);
       }
-      
+
       console.log('[Client] Attempting to connect to', deviceAddress);
-      
-      // Connect with MORE retries and LONGER timeouts
-      let connected = false;
-      for (let attempt = 0; attempt < 10; attempt++) {
+
+      const TOTAL_TIMEOUT = 30000;
+      const startTime = Date.now();
+      let connectedFlag = false;
+
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (Date.now() - startTime > TOTAL_TIMEOUT) break;
+
         try {
-          // Stop discovery only on first attempt
           if (attempt === 0) {
-            try { 
+            try {
               await stopDiscoveringPeers();
-              await new Promise(r => setTimeout(r, 1000));
-            } catch {}
+              await new Promise(r => setTimeout(r, 500)); // Tightened from 1s
+            } catch { }
           }
-          
-          console.log(`[Client] Connection attempt ${attempt + 1}/10`);
-          await connectWithTimeout(deviceAddress, 10000);
-          
-          // Wait LONGER and check more times
-          for (let check = 0; check < 20; check++) {
-            await new Promise(r => setTimeout(r, 800));
-            
+
+          console.log(`[Client] Attempt ${attempt + 1} (Elapsed: ${Math.round((Date.now() - startTime) / 1000)}s)`);
+          let internalError = false;
+
+          try {
+            // Reduced connect timeout from 10s to 7s to fit 30s total
+            await connectWithTimeout(deviceAddress, 7000);
+          } catch (connErr) {
+            if (connErr.message.includes('internal error')) {
+              console.log('[Client] Internal Error (Error 0) detected.');
+              internalError = true;
+            } else {
+              throw connErr;
+            }
+          }
+
+          const checkDelay = internalError ? 600 : 500; // Accelerated from 1000/800
+
+          if (internalError && Platform.OS === 'android') {
+            ToastAndroid.show('Internal busy state. Waiting...', ToastAndroid.SHORT);
+          }
+
+          // Check for group formed until total timeout is reached
+          while (Date.now() - startTime < TOTAL_TIMEOUT) {
+            await new Promise(r => setTimeout(r, checkDelay));
+
             const info = await getConnectionInfo();
             setConnectionInfo(info);
-            
+
             if (info?.groupFormed) {
               setConnected(true);
-              connected = true;
-              
+              connectedFlag = true;
               console.log('[Client] Successfully connected!');
               if (Platform.OS === 'android') {
                 ToastAndroid.show('✓ Connected successfully!', ToastAndroid.SHORT);
               }
-              return; // Success!
+              return;
             }
+
+            // If it wasn't an internal error, break inner loop to allow a retry cleanup
+            // but if it WAS internal error, stay in this wait loop longer (recoverable)
+            if (!internalError && (Date.now() - startTime > (attempt + 1) * 10000)) break;
           }
-          
+
         } catch (err) {
-          console.log(`[Client] Connection attempt ${attempt + 1} failed:`, err.message);
+          console.log(`[Client] Attempt ${attempt + 1} fail:`, err.message);
         }
-        
-        if (!connected && attempt < 9) {
-          // Cleanup before retry
-          try { await removeGroup(); } catch {}
-          await new Promise(r => setTimeout(r, 2000));
+
+        if (!connectedFlag && (Date.now() - startTime < TOTAL_TIMEOUT)) {
+          try { await removeGroup(); } catch { }
+          await new Promise(r => setTimeout(r, 1500)); // Reduced from 3s
         }
       }
-      
+
       // CRITICAL FIX: All attempts failed - show clear message with option to open system settings
       console.log('[Client] Connection failed after all attempts');
-      
+
       Alert.alert(
         'Connection Failed',
         'Could not connect to the host device.\n\nPossible solutions:\n• Ensure the host is ready (shows "Host Ready: ✓ Yes")\n• Try connecting manually from Wi-Fi settings\n• Make sure you\'re within range',
@@ -832,12 +863,12 @@ const WifiDirectScreen = () => {
           }
         ]
       );
-      
+
       // Restart discovery
-      try { await startDiscoveringPeers(); } catch {}
+      try { await startDiscoveringPeers(); } catch { }
       setIsDiscovering(true);
       discoveringActive = true;
-      
+
     } catch (err) {
       console.error('[Client] Connect error:', err);
       if (Platform.OS === 'android') {
@@ -851,13 +882,13 @@ const WifiDirectScreen = () => {
   const handleBarCodeScanned = async ({ type, data }) => {
     setScanned(true);
     setShowScanner(false);
-    
+
     try {
       let hostDeviceAddress = null;
       let hostName = null;
       let fullName = null;
       let backendUrl = null;
-      
+
       try {
         const parsed = JSON.parse(data);
         if (parsed.deviceAddress) hostDeviceAddress = parsed.deviceAddress;
@@ -867,18 +898,18 @@ const WifiDirectScreen = () => {
 
         // Sync Backend URL if present
         if (backendUrl) {
-           if (backendUrl.startsWith('http')) {
-              await updateApiConfig(backendUrl);
-           } else {
-              const match = backendUrl.match(/http:\/\/([^:]+):/);
-              if (match && match[1]) {
-                await updateApiConfig(match[1]);
-              }
-           }
-           console.log('[Client] Backend URL synced from QR');
-           if (Platform.OS === 'android') {
-              ToastAndroid.show(`Backend synced`, ToastAndroid.SHORT);
-           }
+          if (backendUrl.startsWith('http')) {
+            updateApiConfig(backendUrl);
+          } else {
+            const match = backendUrl.match(/http:\/\/([^:]+):/);
+            if (match && match[1]) {
+              updateApiConfig(match[1]);
+            }
+          }
+          console.log('[Client] Backend URL synced from QR');
+          if (Platform.OS === 'android') {
+            ToastAndroid.show(`Backend synced`, ToastAndroid.SHORT);
+          }
         }
       } catch (e) {
         // Not JSON, might be raw address
@@ -886,31 +917,31 @@ const WifiDirectScreen = () => {
           hostDeviceAddress = data;
         }
       }
-      
+
       // CRITICAL FIX: Direct connection with device address from QR
       if (hostDeviceAddress && hostDeviceAddress.includes(':')) {
         console.log('[Client] Connecting directly to address from QR:', hostDeviceAddress);
-        
+
         Alert.alert(
           'Connect to Host?',
           `Connect to ${fullName || hostName || 'this device'}?`,
           [
             { text: 'Cancel', onPress: () => setScanned(false), style: 'cancel' },
-            { 
-              text: 'Connect', 
+            {
+              text: 'Connect',
               onPress: () => connectToDevice(hostDeviceAddress)
             }
           ]
         );
         return;
       }
-      
+
       // Fallback: Name-based search (less reliable)
       if (hostName) {
         if (!isDiscovering && !discoveringActive) {
           handleConnectMode();
         }
-        
+
         if (Platform.OS === 'android') {
           ToastAndroid.show(`Searching for ${fullName || hostName}...`, ToastAndroid.SHORT);
         }
@@ -918,32 +949,32 @@ const WifiDirectScreen = () => {
         // Search for device by name
         let found = false;
         for (let i = 0; i < 12; i++) {
-           try {
-              const result = await getAvailablePeers();
-              const raw = result.devices;
-              const avail = raw.filter(p => p.status === 3);
-              const currentPeers = avail.length ? avail : raw;
-              setPeers(currentPeers);
-              
-              let match = currentPeers.find(p => p.deviceName === hostName);
-              
-              if (!match) {
-                 match = currentPeers.find(p => 
-                    p.deviceName?.toLowerCase() === hostName?.toLowerCase()
-                 );
-              }
+          try {
+            const result = await getAvailablePeers();
+            const raw = result.devices;
+            const avail = raw.filter(p => p.status === 3);
+            const currentPeers = avail.length ? avail : raw;
+            setPeers(currentPeers);
 
-              if (match && match.deviceAddress) {
-                 found = true;
-                 console.log('[Client] Found host via name search:', match.deviceName);
-                 connectToDevice(match.deviceAddress);
-                 break;
-              }
-           } catch (e) { 
-             console.log('[Client] Peer scan error:', e); 
-           }
-           
-           if (!found) await new Promise(r => setTimeout(r, 2000));
+            let match = currentPeers.find(p => p.deviceName === hostName);
+
+            if (!match) {
+              match = currentPeers.find(p =>
+                p.deviceName?.toLowerCase() === hostName?.toLowerCase()
+              );
+            }
+
+            if (match && match.deviceAddress) {
+              found = true;
+              console.log('[Client] Found host via name search:', match.deviceName);
+              connectToDevice(match.deviceAddress);
+              break;
+            }
+          } catch (e) {
+            console.log('[Client] Peer scan error:', e);
+          }
+
+          if (!found) await new Promise(r => setTimeout(r, 2000));
         }
 
         if (!found) {
@@ -957,7 +988,7 @@ const WifiDirectScreen = () => {
         }
         return;
       }
-      
+
       if (Platform.OS === 'android') {
         ToastAndroid.show('Invalid QR Code', ToastAndroid.SHORT);
       } else {
@@ -972,18 +1003,18 @@ const WifiDirectScreen = () => {
   };
 
   const getQRData = () => {
-     // CRITICAL FIX: Include device address in QR for direct connection
-     let deviceAddress = null;
-     if (connectionInfo?.groupOwnerAddress) {
-       const addrObj = connectionInfo.groupOwnerAddress;
-       deviceAddress = typeof addrObj === 'string' ? addrObj : addrObj?.hostAddress;
-     }
-     
-     let backendUrlToShare = BASE_URL;
-     if ((mode === 'host' || hostingActive) && ensureProxy() && Proxy?.isProxyActive && Proxy.isProxyActive()) {
-        backendUrlToShare = 'http://192.168.49.1:8080';
-     }
-     
+    // CRITICAL FIX: Include device address in QR for direct connection
+    let deviceAddress = null;
+    if (connectionInfo?.groupOwnerAddress) {
+      const addrObj = connectionInfo.groupOwnerAddress;
+      deviceAddress = typeof addrObj === 'string' ? addrObj : addrObj?.hostAddress;
+    }
+
+    let backendUrlToShare = BASE_URL;
+    if ((mode === 'host' || hostingActive) && ensureProxy() && Proxy?.isProxyActive && Proxy.isProxyActive()) {
+      backendUrlToShare = 'http://192.168.49.1:8080';
+    }
+
     return JSON.stringify({
       name: hostDeviceName,
       fullName: user?.fullName || 'Host',
@@ -1024,8 +1055,16 @@ const WifiDirectScreen = () => {
               <Text style={styles.modalTitle}>Share Backend via Hotspot</Text>
             </View>
             <Text style={styles.modalText}>
-              You are online. Share the backend using your device hotspot for better connectivity.
+              To share the backend with nearby devices, follow these steps:
             </Text>
+            <View style={{ paddingLeft: 8, marginBottom: 12 }}>
+              <Text style={[styles.modalText, { marginBottom: 4 }]}>
+                1. Enable <Text style={{ fontWeight: 'bold' }}>Hotspot Proxy Mode</Text> in your Profile Settings.
+              </Text>
+              <Text style={[styles.modalText, { marginBottom: 4 }]}>
+                2. Turn on your <Text style={{ fontWeight: 'bold' }}>Mobile Hotspot</Text> so other devices can connect.
+              </Text>
+            </View>
             <View style={styles.modalActions}>
               <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#9e9e9e' }]} onPress={() => setShowHotspotModal(false)}>
                 <Text style={styles.modalBtnText}>Cancel</Text>
@@ -1034,10 +1073,11 @@ const WifiDirectScreen = () => {
                 style={[styles.modalBtn, { backgroundColor: '#1976d2' }]}
                 onPress={() => {
                   setShowHotspotModal(false);
-                  openHotspotSettings();
+                  // Navigate to Home and auto-open Profile Sidebar on Settings tab
+                  navigation.navigate('Home', { openSettings: true });
                 }}
               >
-                <Text style={styles.modalBtnText}>Open Hotspot Settings</Text>
+                <Text style={styles.modalBtnText}>Got It</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1079,7 +1119,7 @@ const WifiDirectScreen = () => {
                 </View>
               </View>
             )}
-            
+
             <TouchableOpacity
               style={[styles.modeCard, (connected || isDiscovering || hostingActive || discoveringActive || (connectionInfo?.groupFormed)) ? { opacity: 0.5 } : null]}
               onPress={() => {
@@ -1140,18 +1180,18 @@ const WifiDirectScreen = () => {
                 Host Ready: {hostReady ? '✓ Yes - Clients can connect!' : '⏳ Initializing...'}
               </Text>
               <Text style={styles.infoText}>Setup time: {setupMs != null ? `${setupMs} ms` : '—'}</Text>
-              
+
               <Text style={[styles.statusTitle, { marginTop: 16 }]}>Connected Peers</Text>
               {peers.filter(p => p.status === 0).length > 0 ? (
-                 peers.filter(p => p.status === 0).map((p, i) => (
-                   <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 2 }}>
-                     <Ionicons name="person" size={14} color="#666" style={{ marginRight: 6 }} />
-                     <Text style={styles.infoText}>
-                        {peerIdentities[p.deviceName] || p.deviceName} 
-                        {p.deviceAddress ? ` (${p.deviceAddress.substring(0,8)}...)` : ''}
-                     </Text>
-                   </View>
-                 ))
+                peers.filter(p => p.status === 0).map((p, i) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginVertical: 2 }}>
+                    <Ionicons name="person" size={14} color="#666" style={{ marginRight: 6 }} />
+                    <Text style={styles.infoText}>
+                      {peerIdentities[p.deviceName] || p.deviceName}
+                      {p.deviceAddress ? ` (${p.deviceAddress.substring(0, 8)}...)` : ''}
+                    </Text>
+                  </View>
+                ))
               ) : (
                 <Text style={[styles.infoText, { fontStyle: 'italic', color: '#999' }]}>
                   {connected ? (hostReady ? 'Waiting for clients to connect...' : 'Initializing proxy...') : 'Waiting for group...'}
@@ -1174,7 +1214,7 @@ const WifiDirectScreen = () => {
                 </Text>
               </View>
             )}
-            
+
             {!hostReady && (
               <View style={styles.waitingContainer}>
                 <ActivityIndicator size="large" color="#1976d2" />
@@ -1184,8 +1224,8 @@ const WifiDirectScreen = () => {
             )}
 
             {/* UPDATED: Stop Hosting button with loading state */}
-            <TouchableOpacity 
-              style={[styles.actionBtn, { backgroundColor: '#d32f2f' }]} 
+            <TouchableOpacity
+              style={[styles.actionBtn, { backgroundColor: '#d32f2f' }]}
               onPress={async () => {
                 if (stopping) return;
                 setStopping(true);
@@ -1194,31 +1234,31 @@ const WifiDirectScreen = () => {
                     try {
                       Proxy.stopProxyServer();
                       console.log('[Host] Proxy stopped');
-                    } catch {}
+                    } catch { }
                   }
-                  
+
                   let removed = false;
                   for (let i = 0; i < 3 && !removed; i++) {
                     try {
                       await removeGroup();
                       removed = true;
-                    } catch {}
+                    } catch { }
                     if (!removed) await new Promise(r => setTimeout(r, 800));
                   }
                   await new Promise(r => setTimeout(r, 1000));
                   console.log('[Host] Group removed');
-                  
+
                   hostingActive = false;
                   setMode(null);
                   setConnected(false);
                   setIsDiscovering(false);
                   setConnectionInfo(null);
                   setHostReady(false);
-                  
+
                   // CRITICAL: Reset API connection tracking
                   await initApiConfig();
                   setWifiDirectConnection(false);
-                  
+
                   if (Platform.OS === 'android') {
                     ToastAndroid.show('Stopped hosting successfully', ToastAndroid.SHORT);
                   }
@@ -1243,74 +1283,85 @@ const WifiDirectScreen = () => {
           </View>
         ) : (
           <View style={styles.connectContainer}>
-            {proxyConnecting && (
-              <View style={styles.waitingContainer}>
-                <ActivityIndicator size="large" color="#1976d2" />
-                <Text style={styles.waitingText}>Connecting to Host Proxy...</Text>
-                <Text style={styles.waitingSubText}>Please wait while we establish secure connection</Text>
+            {(proxyConnecting || connecting) && (
+              <View style={styles.premiumWaitingCard}>
+                <View style={styles.pulseContainer}>
+                  <ActivityIndicator size="large" color="#1976d2" />
+                  <View style={styles.pulseIcon}>
+                    <Ionicons name="wifi" size={24} color="#1976d2" />
+                  </View>
+                </View>
+                <Text style={styles.waitingText}>
+                  {proxyConnecting ? 'Connecting to Host Proxy...' : 'Establishing Direct Link...'}
+                </Text>
+                <Text style={styles.waitingSubText}>
+                  {proxyConnecting
+                    ? 'Synchronizing emergency data with host'
+                    : 'Searching for host. Ensure device is nearby.'}
+                </Text>
               </View>
             )}
             {connected && connectionInfo ? (
-               <View style={styles.statusCard}>
-                   <View style={{flexDirection:'row', justifyContent:'space-between', alignItems:'center'}}>
-                     <Text style={styles.statusTitle}>Connected to Host</Text>
-                     <View style={[styles.statusDot, { backgroundColor: '#4caf50' }]} />
-                   </View>
-                   <Text style={[styles.infoText, {marginTop:8}]}>Host IP: {
-                     (() => {
-                        const addrObj = connectionInfo.groupOwnerAddress;
-                        return typeof addrObj === 'string' ? addrObj : addrObj?.hostAddress || 'Unknown';
-                     })()
-                   }</Text>
-                   <Text style={styles.infoText}>Status: Online</Text>
-                   
-                   {/* UPDATED: Disconnect button with loading state */}
-                   <TouchableOpacity 
-                      style={[styles.actionBtn, { backgroundColor: '#d32f2f', marginTop: 16 }]} 
-                      onPress={async () => {
-                        if (disconnecting) return;
-                        setDisconnecting(true);
-                        try {
-                          await removeGroup();
-                          await new Promise(r => setTimeout(r, 1000));
-                          console.log('[Client] Disconnected');
-                          
-                          setConnected(false);
-                          setMode(null);
-                          setConnectionInfo(null);
-                          hostingActive = false;
-                          discoveringActive = false;
-                          proxySetRef.current = false;
-                          
-                          // CRITICAL: Reset API connection tracking
-                          await initApiConfig();
-                          setWifiDirectConnection(false);
-                          
-                          if (Platform.OS === 'android') {
-                            ToastAndroid.show('Disconnected successfully', ToastAndroid.SHORT);
-                          }
-                        } catch (e) {
-                          console.log('[Client] Disconnect error:', e);
-                        } finally {
-                          setTimeout(() => setDisconnecting(false), 500);
-                        }
-                      }}
-                      disabled={disconnecting}
-                    >
-                      {disconnecting ? (
-                        <ActivityIndicator color="#fff" size="small" />
-                      ) : (
-                        <Text style={styles.actionBtnText}>Disconnect</Text>
-                      )}
-                    </TouchableOpacity>
-               </View>
+              <View style={styles.statusCard}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={styles.statusTitle}>Connected to Host</Text>
+                  <View style={[styles.statusDot, { backgroundColor: '#4caf50' }]} />
+                </View>
+                <Text style={[styles.infoText, { marginTop: 8 }]}>Host IP: {
+                  (() => {
+                    const addrObj = connectionInfo.groupOwnerAddress;
+                    return typeof addrObj === 'string' ? addrObj : addrObj?.hostAddress || 'Unknown';
+                  })()
+                }</Text>
+                <Text style={styles.infoText}>Status: Online</Text>
+
+                {/* UPDATED: Disconnect button with loading state */}
+                <TouchableOpacity
+                  style={[styles.actionBtn, { backgroundColor: '#d32f2f', marginTop: 16 }]}
+                  onPress={async () => {
+                    if (disconnecting) return;
+                    setDisconnecting(true);
+                    try {
+                      await removeGroup();
+                      await new Promise(r => setTimeout(r, 1000));
+                      console.log('[Client] Disconnected');
+
+                      setConnected(false);
+                      setMode(null);
+                      setConnectionInfo(null);
+                      hostingActive = false;
+                      discoveringActive = false;
+                      proxySetRef.current = false;
+
+                      // CRITICAL: Reset API connection tracking
+                      await initApiConfig();
+                      setWifiDirectConnection(false);
+
+                      if (Platform.OS === 'android') {
+                        ToastAndroid.show('Disconnected successfully', ToastAndroid.SHORT);
+                      }
+                    } catch (e) {
+                      console.log('[Client] Disconnect error:', e);
+                    } finally {
+                      setTimeout(() => setDisconnecting(false), 500);
+                    }
+                  }}
+                  disabled={disconnecting}
+                >
+                  {disconnecting ? (
+                    <ActivityIndicator color="#fff" size="small" />
+                  ) : (
+                    <Text style={styles.actionBtnText}>Disconnect</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
             ) : (
-            <View style={styles.scanSection}>
-              <TouchableOpacity style={styles.scanBtn} onPress={() => { if (connecting) return; setScanned(false); setShowScanner(true); }}>
-                <Ionicons name="qr-code-outline" size={24} color="#fff" />
-                <Text style={styles.scanBtnText}>Scan QR Code</Text>
-              </TouchableOpacity>
-            </View>
+              <View style={styles.scanSection}>
+                <TouchableOpacity style={styles.scanBtn} onPress={() => { if (connecting) return; setScanned(false); setShowScanner(true); }}>
+                  <Ionicons name="qr-code-outline" size={24} color="#fff" />
+                  <Text style={styles.scanBtnText}>Scan QR Code</Text>
+                </TouchableOpacity>
+              </View>
             )}
 
             <Text style={styles.sectionHeader}>Available Devices</Text>
@@ -1325,11 +1376,11 @@ const WifiDirectScreen = () => {
               const list = available.length ? available : base.filter(isP2P);
               if (list.length === 0) {
                 return (
-              <View style={styles.emptyState}>
-                <ActivityIndicator size="small" color="#666" />
-                <Text style={styles.emptyText}>Searching for devices...</Text>
-              </View>
-              );
+                  <View style={styles.emptyState}>
+                    <ActivityIndicator size="small" color="#666" />
+                    <Text style={styles.emptyText}>Searching for devices...</Text>
+                  </View>
+                );
               }
               return list.map((peer, index) => (
                 <TouchableOpacity key={index} style={[styles.peerItem, connecting ? { opacity: 0.6 } : null]} onPress={() => { if (connecting) return; connectToDevice(peer.deviceAddress); }}>
@@ -1341,49 +1392,52 @@ const WifiDirectScreen = () => {
                 </TouchableOpacity>
               ));
             })()}
-            
-            <TouchableOpacity 
-              style={[styles.actionBtn, { backgroundColor: '#2e7d32', marginTop: 12 }]} 
-              onPress={autoConnectToHost}
-              disabled={connecting}
-            >
-              <Text style={styles.actionBtnText}>
-                {connecting ? 'Connecting...' : 'Auto Connect to Host'}
-              </Text>
-            </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.actionBtn, { backgroundColor: '#2b4266', marginTop: 12 }]} 
-              onPress={diagnoseWifiDirect}
-            >
-              <Text style={styles.actionBtnText}>Diagnose Connection</Text>
-            </TouchableOpacity>
+            <View style={styles.gridActions}>
+              <TouchableOpacity
+                style={[styles.smallActionBtn, { backgroundColor: '#2e7d32' }]}
+                onPress={autoConnectToHost}
+                disabled={connecting}
+              >
+                <Ionicons name="flash" size={18} color="#fff" />
+                <Text style={styles.smallActionBtnText}>
+                  {connecting ? '...' : 'Auto Connect'}
+                </Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.actionBtn, { backgroundColor: '#1976d2', marginTop: 12 }]} 
-              onPress={repairWifiDirect}
-            >
-              <Text style={styles.actionBtnText}>Repair & Restart Discovery</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.smallActionBtn, { backgroundColor: '#2b4266' }]}
+                onPress={diagnoseWifiDirect}
+              >
+                <Ionicons name="bug" size={18} color="#fff" />
+                <Text style={styles.smallActionBtnText}>Diagnose</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity 
-              style={[styles.actionBtn, { backgroundColor: '#757575', marginTop: 20 }]} 
-              onPress={async () => {
-                try {
-                  await stopDiscoveringPeers();
-                  console.log('[Client] Discovery stopped');
-                } catch (e) {
-                  console.log('[Client] Error stopping discovery:', e);
-                }
-                discoveringActive = false;
-                setIsDiscovering(false);
-                setMode(null);
-                setConnected(false);
-                setConnectionInfo(null);
-              }}
-            >
-              <Text style={styles.actionBtnText}>Cancel</Text>
-            </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.smallActionBtn, { backgroundColor: '#1976d2' }]}
+                onPress={repairWifiDirect}
+              >
+                <Ionicons name="build" size={18} color="#fff" />
+                <Text style={styles.smallActionBtnText}>Repair</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={[styles.smallActionBtn, { backgroundColor: '#757575' }]}
+                onPress={async () => {
+                  try {
+                    await stopDiscoveringPeers();
+                  } catch (e) { }
+                  discoveringActive = false;
+                  setIsDiscovering(false);
+                  setMode(null);
+                  setConnected(false);
+                  setConnectionInfo(null);
+                }}
+              >
+                <Ionicons name="close-circle" size={18} color="#fff" />
+                <Text style={styles.smallActionBtnText}>Cancel</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         )}
       </ScrollView>
@@ -1432,9 +1486,65 @@ const styles = StyleSheet.create({
   qrWrapper: { padding: 10, backgroundColor: '#fff' },
   waitingContainer: { alignItems: 'center', backgroundColor: '#fff', padding: 32, borderRadius: 16, elevation: 4, marginBottom: 24 },
   waitingText: { fontSize: 14, fontWeight: 'bold', color: '#666', marginTop: 16 },
-  waitingSubText: { fontSize: 12, color: '#999', marginTop: 4 },
-  actionBtn: { width: '100%', padding: 16, borderRadius: 12, alignItems: 'center' },
-  actionBtnText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
+  waitingSubText: { fontSize: 12, color: '#999', marginTop: 4, textAlign: 'center' },
+  premiumWaitingCard: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 32,
+    alignItems: 'center',
+    marginBottom: 24,
+    shadowColor: '#1976d2',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.15,
+    shadowRadius: 20,
+    elevation: 8,
+    borderWidth: 1,
+    borderColor: '#e3f2fd'
+  },
+  pulseContainer: {
+    width: 80,
+    height: 80,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20
+  },
+  pulseIcon: {
+    position: 'absolute',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#e3f2fd',
+    justifyContent: 'center',
+    alignItems: 'center'
+  },
+  gridActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    paddingTop: 12
+  },
+  smallActionBtn: {
+    width: '48%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+    borderRadius: 12,
+    marginBottom: 12,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2
+  },
+  smallActionBtnText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+    marginLeft: 6
+  },
+  actionBtn: { width: '100%', padding: 14, borderRadius: 12, alignItems: 'center' },
+  actionBtnText: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
   connectContainer: { width: '100%' },
   scanSection: { alignItems: 'center', marginBottom: 24 },
   scanBtn: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#2b4266', paddingVertical: 12, paddingHorizontal: 24, borderRadius: 30 },

@@ -53,20 +53,20 @@ const registerUser = async (req, res) => {
 
   // Generate 7-char random code
   const generateUserCode = () => {
-      const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-      let result = '';
-      for (let i = 0; i < 7; i++) {
-        result += chars.charAt(Math.floor(Math.random() * chars.length));
-      }
-      return result;
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let result = '';
+    for (let i = 0; i < 7; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
   };
 
   let userCode = generateUserCode();
   // Check uniqueness (simple check)
   let userExists = await User.findOne({ userCode });
-  while(userExists) {
-      userCode = generateUserCode();
-      userExists = await User.findOne({ userCode });
+  while (userExists) {
+    userCode = generateUserCode();
+    userExists = await User.findOne({ userCode });
   }
 
   // Prevent duplicate names per role (case-insensitive, excluding deleted)
@@ -266,4 +266,26 @@ const getUserProfile = async (req, res) => {
   }
 };
 
-module.exports = { loginUser, registerUser, getUsers, getDeletedUsers, getChangedUsers, deleteUser, changeUserPassword, lookupByCode, setPassword, updateUserProfile, getUserProfile };
+// @desc    Get user by ID
+// @route   GET /api/users/profile/:id
+// @access  Private/Staff
+const getUserById = async (req, res) => {
+  const user = await User.findById(req.params.id);
+
+  if (user) {
+    res.json({
+      _id: user._id,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      middleName: user.middleName,
+      userCode: user.userCode,
+      role: user.role,
+      emergencyContact: user.emergencyContact,
+      personalInfo: user.personalInfo,
+    });
+  } else {
+    res.status(404).json({ message: 'User not found' });
+  }
+};
+
+module.exports = { loginUser, registerUser, getUsers, getDeletedUsers, getChangedUsers, deleteUser, changeUserPassword, lookupByCode, setPassword, updateUserProfile, getUserProfile, getUserById };

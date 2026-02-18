@@ -94,7 +94,6 @@ export const saveReportHistory = async (reports) => {
   try {
     if (!Array.isArray(reports)) return false;
     await AsyncStorage.setItem(REPORT_HISTORY_KEY, JSON.stringify(reports));
-    console.log('[History] Saved', reports.length, 'reports');
     return true;
   } catch (e) {
     console.error('[Offline] Error saving history:', e);
@@ -543,51 +542,91 @@ export const updateOfflineReportStatus = async (reportId, status, user) => {
 export const markReportsSynced = async (reportIds) => {
   try {
     const reportsStr = await AsyncStorage.getItem(OFFLINE_REPORTS_KEY);
+    const hostedStr = await AsyncStorage.getItem(HOSTED_REPORTS_KEY);
+
+    // Get the ID map to reconcile temporary IDs
+    const mapStr = await AsyncStorage.getItem(OFFLINE_TO_ONLINE_ID_MAP_KEY);
+    const idMap = mapStr ? JSON.parse(mapStr) : {};
+
+    // 1. Update offline reports
     if (reportsStr) {
       let reports = JSON.parse(reportsStr);
+      let modified = false;
+
       reports = reports.map(r => {
-        if (reportIds.includes(r._id) || reportIds.includes(r._originalOfflineId)) {
-          return { ...r, synced: true, syncedToBackend: true };
+        // Match by current ID, original offline ID, OR reversed map entry
+        const isMatch = reportIds.includes(r._id) ||
+          (r._originalOfflineId && reportIds.includes(r._originalOfflineId)) ||
+          Object.values(idMap).some(onlineId => onlineId === r._id && reportIds.includes(Object.keys(idMap).find(key => idMap[key] === onlineId)));
+
+        if (isMatch) {
+          modified = true;
+          // If we have a mapped online ID, use it
+          const onlineId = idMap[r._id] || r._id;
+          return {
+            ...r,
+            _id: onlineId,
+            _originalOfflineId: r._originalOfflineId || (r._id.startsWith('offline_') ? r._id : null),
+            synced: true,
+            syncedToBackend: true
+          };
         }
         return r;
       });
-      await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(reports));
-    }
 
-    // Update hosted reports
-    const hostedStr = await AsyncStorage.getItem(HOSTED_REPORTS_KEY);
-    if (hostedStr) {
-      let hosted = JSON.parse(hostedStr);
-      hosted = hosted.map(r => {
-        if (reportIds.includes(r._id) || reportIds.includes(r._originalOfflineId)) {
-          return { ...r, synced: true, syncedToBackend: true };
-        }
-        return r;
-      });
-      await AsyncStorage.setItem(HOSTED_REPORTS_KEY, JSON.stringify(hosted));
-
-      // ✅ FIX: Also update ProxyServer memory if active, otherwise it will overwrite disk with stale data
-      if (isProxyActive()) {
-        const { updateHostedReportInMemory } = require('../services/ProxyServer'); // safe require
-
-        hosted.forEach(r => {
-          if (reportIds.includes(r._id) || reportIds.includes(r._originalOfflineId)) {
-            // Update the report in memory to be synced
-            updateHostedReportInMemory(r._id, {
-              synced: true,
-              syncedToBackend: true
-            });
-          }
-        });
-        console.log('[Sync] Updated ProxyServer memory for synced reports');
+      if (modified) {
+        await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(reports));
       }
     }
 
-    for (const reportId of reportIds) {
-      await addSyncedReportId(reportId);
+    // 2. Update hosted reports
+    if (hostedStr) {
+      let hosted = JSON.parse(hostedStr);
+      let modified = false;
+
+      hosted = hosted.map(r => {
+        const isMatch = reportIds.includes(r._id) ||
+          (r._originalOfflineId && reportIds.includes(r._originalOfflineId)) ||
+          Object.values(idMap).some(onlineId => onlineId === r._id && reportIds.includes(Object.keys(idMap).find(key => idMap[key] === onlineId)));
+
+        if (isMatch) {
+          modified = true;
+          const onlineId = idMap[r._id] || r._id;
+          const updated = {
+            ...r,
+            _id: onlineId,
+            _originalOfflineId: r._originalOfflineId || (r._id.startsWith('offline_') ? r._id : null),
+            synced: true,
+            syncedToBackend: true
+          };
+
+          // Sync with ProxyServer memory if active
+          if (isProxyActive()) {
+            try {
+              updateHostedReportInMemory(r._id, updated);
+            } catch (e) { console.error('[Sync] Proxy memory update failed:', e); }
+          }
+
+          return updated;
+        }
+        return r;
+      });
+
+      if (modified) {
+        await AsyncStorage.setItem(HOSTED_REPORTS_KEY, JSON.stringify(hosted));
+      }
     }
 
-    console.log('[Sync] Marked', reportIds.length, 'reports as synced');
+    // Mark all provided IDs as synced in the tracker
+    for (const reportId of reportIds) {
+      await addSyncedReportId(reportId);
+      // Also mark the mapped online ID as synced
+      if (idMap[reportId]) {
+        await addSyncedReportId(idMap[reportId]);
+      }
+    }
+
+    console.log('[Sync] Marked', reportIds.length, 'reports and their mappings as synced');
   } catch (e) {
     console.error('[Sync] Error marking synced:', e);
   }
@@ -595,61 +634,58 @@ export const markReportsSynced = async (reportIds) => {
 
 export const markStatusUpdatesSynced = async (reportId, statusUpdates) => {
   try {
+    const onlineId = await getOnlineId(reportId) || reportId;
+
+    // Helper to update status history in a list of reports
+    const updateReportsList = (reports) => {
+      let modified = false;
+      const updated = reports.map(r => {
+        const isMatch = r._id === reportId || r._id === onlineId ||
+          r._originalOfflineId === reportId || r._originalOfflineId === onlineId;
+
+        if (isMatch) {
+          modified = true;
+          const newHistory = (r.statusHistory || []).map(h => {
+            const matchingUpdate = statusUpdates.find(u =>
+              u.status === h.status &&
+              String(u.updatedBy?._id || u.updatedBy) === String(h.updatedBy?._id || h.updatedBy)
+            );
+            if (matchingUpdate) return { ...h, syncedToBackend: true };
+            return h;
+          });
+          return { ...r, statusHistory: newHistory };
+        }
+        return r;
+      });
+      return { updated, modified };
+    };
+
     // Update offline reports
     const reportsStr = await AsyncStorage.getItem(OFFLINE_REPORTS_KEY);
     if (reportsStr) {
-      let reports = JSON.parse(reportsStr);
-      const reportIndex = reports.findIndex(r => r._id === reportId || r._originalOfflineId === reportId);
-
-      if (reportIndex !== -1) {
-        const report = reports[reportIndex];
-        if (report.statusHistory) {
-          report.statusHistory = report.statusHistory.map(entry => {
-            const matchingUpdate = statusUpdates.find(
-              u => u.status === entry.status && u.updatedBy?._id === entry.updatedBy?._id
-            );
-            if (matchingUpdate) {
-              return { ...entry, syncedToBackend: true };
-            }
-            return entry;
-          });
-
-          reports[reportIndex] = report;
-          await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(reports));
-        }
-      }
+      const { updated, modified } = updateReportsList(JSON.parse(reportsStr));
+      if (modified) await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(updated));
     }
 
     // Update hosted reports
     const hostedStr = await AsyncStorage.getItem(HOSTED_REPORTS_KEY);
     if (hostedStr) {
-      let hosted = JSON.parse(hostedStr);
-      const hostedIndex = hosted.findIndex(r => r._id === reportId || r._originalOfflineId === reportId);
-
-      if (hostedIndex !== -1) {
-        const report = hosted[hostedIndex];
-        if (report.statusHistory) {
-          report.statusHistory = report.statusHistory.map(entry => {
-            const matchingUpdate = statusUpdates.find(
-              u => u.status === entry.status && u.updatedBy?._id === entry.updatedBy?._id
-            );
-            if (matchingUpdate) {
-              return { ...entry, syncedToBackend: true };
-            }
-            return entry;
-          });
-
-          hosted[hostedIndex] = report;
-          await AsyncStorage.setItem(HOSTED_REPORTS_KEY, JSON.stringify(hosted));
+      const { updated, modified } = updateReportsList(JSON.parse(hostedStr));
+      if (modified) {
+        await AsyncStorage.setItem(HOSTED_REPORTS_KEY, JSON.stringify(updated));
+        if (isProxyActive()) {
+          const syncedReport = updated.find(r => r._id === reportId || r._id === onlineId);
+          if (syncedReport) updateHostedReportInMemory(syncedReport._id, syncedReport);
         }
       }
     }
 
+    // Track internally
     for (const update of statusUpdates) {
-      await addSyncedStatusUpdate(reportId, update.status, update.updatedBy?._id || update.updatedBy);
+      await addSyncedStatusUpdate(onlineId, update.status, update.updatedBy?._id || update.updatedBy);
     }
   } catch (e) {
-    console.error('[Sync] Error marking status updates:', e);
+    console.error('[Sync] Error marking status synced:', e);
   }
 };
 
@@ -711,31 +747,36 @@ export const updateSyncedOfflineReport = async (onlineReport) => {
 
         const latestStatus = mergedHistory.length > 0 ? mergedHistory[0].status : onlineReport.status;
 
-        reports[reportIndex] = {
-          ...onlineReport,
-          _id: onlineReport._id,
-          latitude: onlineReport.location?.latitude || oldReport.latitude,
-          longitude: onlineReport.location?.longitude || oldReport.longitude,
-          location: onlineReport.location,
-          isOffline: true,
-          synced: true,
-          syncedToBackend: true,
-          fromHost: oldReport.fromHost,
-          hostedInGroup: oldReport.hostedInGroup,
-          status: latestStatus,
-          statusHistory: mergedHistory,
-          _originalOfflineId: oldOfflineId,
-          user: onlineReport.user || oldReport.user || {
-            _id: 'unknown',
-            firstName: 'Unknown',
-            lastName: 'User',
-            role: 'User'
-          }
-        };
+        // ✅ DIFF CHECK: Only update/log if something actually changed
+        const hasIdChange = oldOfflineId !== onlineReport._id;
+        const hasStatusChange = oldReport.status !== latestStatus;
+        const hasHistoryChange = (oldReport.statusHistory?.length || 0) !== mergedHistory.length;
+        const hasPendingSync = !oldReport.syncedToBackend || !oldReport.synced;
 
-        await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(reports));
-        updated = true;
-        console.log('[Update] Synced offline report:', oldOfflineId, '→', onlineReport._id);
+        const needsUpdate = hasIdChange || hasStatusChange || hasHistoryChange || hasPendingSync;
+
+        if (needsUpdate) {
+          reports[reportIndex] = {
+            ...oldReport, // Start with old report to preserve extra local flags
+            ...onlineReport,
+            _id: onlineReport._id,
+            latitude: onlineReport.location?.latitude || oldReport.latitude,
+            longitude: onlineReport.location?.longitude || oldReport.longitude,
+            location: onlineReport.location,
+            isOffline: true,
+            synced: true,
+            syncedToBackend: true,
+            fromHost: oldReport.fromHost,
+            hostedInGroup: oldReport.hostedInGroup,
+            status: latestStatus,
+            statusHistory: mergedHistory,
+            _originalOfflineId: oldOfflineId,
+          };
+
+          await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(reports));
+          updated = true;
+          console.log('[Update] Synced offline report:', oldOfflineId, '→', onlineReport._id, `(S:${latestStatus} H:${mergedHistory.length})`);
+        }
       }
     }
 
@@ -773,30 +814,35 @@ export const updateSyncedOfflineReport = async (onlineReport) => {
 
         const latestStatus = mergedHistory.length > 0 ? mergedHistory[0].status : onlineReport.status;
 
-        hosted[hostedIndex] = {
-          ...onlineReport,
-          _id: onlineReport._id,
-          latitude: onlineReport.location?.latitude || oldReport.latitude,
-          longitude: onlineReport.location?.longitude || oldReport.longitude,
-          location: onlineReport.location,
-          isOffline: true,
-          synced: true,
-          syncedToBackend: true,
-          fromHost: false,
-          hostedInGroup: true,
-          status: latestStatus,
-          statusHistory: mergedHistory,
-          user: onlineReport.user || oldReport.user || {
-            _id: 'unknown',
-            firstName: 'Unknown',
-            lastName: 'User',
-            role: 'User'
-          }
-        };
+        // ✅ DIFF CHECK: Only update/log if something actually changed
+        const hasIdChange = oldReport._id !== onlineReport._id;
+        const hasStatusChange = oldReport.status !== latestStatus;
+        const hasHistoryChange = (oldReport.statusHistory?.length || 0) !== mergedHistory.length;
+        const hasPendingSync = !oldReport.syncedToBackend || !oldReport.synced;
 
-        await AsyncStorage.setItem(HOSTED_REPORTS_KEY, JSON.stringify(hosted));
-        updated = true;
-        console.log('[Update] Synced hosted report:', onlineReport._id);
+        const needsUpdate = hasIdChange || hasStatusChange || hasHistoryChange || hasPendingSync;
+
+        if (needsUpdate) {
+          hosted[hostedIndex] = {
+            ...oldReport,
+            ...onlineReport,
+            _id: onlineReport._id,
+            latitude: onlineReport.location?.latitude || oldReport.latitude,
+            longitude: onlineReport.location?.longitude || oldReport.longitude,
+            location: onlineReport.location,
+            isOffline: true,
+            synced: true,
+            syncedToBackend: true,
+            fromHost: false, // It's now online, no longer just from host
+            hostedInGroup: true,
+            status: latestStatus,
+            statusHistory: mergedHistory,
+          };
+
+          await AsyncStorage.setItem(HOSTED_REPORTS_KEY, JSON.stringify(hosted));
+          updated = true;
+          console.log('[Update] Synced hosted report:', onlineReport._id, `(S:${latestStatus} H:${mergedHistory.length})`);
+        }
       }
     }
 
@@ -1108,6 +1154,34 @@ export const syncOfflineReportsToBackend = async (reportIds = null) => {
 
         if (response.data?._id && typeof report._id === 'string' && report._id.startsWith('offline_')) {
           await mapOfflineToOnlineId(report._id, response.data._id);
+
+          // CRITICAL: Update local storage immediately to prevent sync loops
+          const onlineId = response.data._id;
+          if (report.hostedInGroup) {
+            await updateHostedReport(report._id, {
+              _id: onlineId,
+              syncedToBackend: true,
+              synced: true,
+              _originalOfflineId: report._id
+            });
+          } else {
+            // Find and update in offline reports storage
+            const offlineStr = await AsyncStorage.getItem(OFFLINE_REPORTS_KEY);
+            if (offlineStr) {
+              const offline = JSON.parse(offlineStr);
+              const idx = offline.findIndex(r => r._id === report._id);
+              if (idx !== -1) {
+                offline[idx] = {
+                  ...offline[idx],
+                  _id: onlineId,
+                  syncedToBackend: true,
+                  synced: true,
+                  _originalOfflineId: report._id
+                };
+                await AsyncStorage.setItem(OFFLINE_REPORTS_KEY, JSON.stringify(offline));
+              }
+            }
+          }
         }
 
         syncedIds.push(response.data?._id || report._id);
@@ -1366,4 +1440,53 @@ export const fetchOnlineReportsFromHost = async (hostUrl) => {
 export const clearOnlineReportsCache = () => {
   onlineReportsCache = [];
   lastOnlineFetch = 0;
+};
+
+// ============================================
+// REAL-TIME BACKEND-TO-LOCAL SYNC
+// ============================================
+
+export const syncStatusesFromBackend = async () => {
+  try {
+    const reportsStr = await AsyncStorage.getItem(OFFLINE_REPORTS_KEY);
+    const hostedStr = await AsyncStorage.getItem(HOSTED_REPORTS_KEY);
+
+    let allReports = [];
+    if (reportsStr) allReports = [...allReports, ...JSON.parse(reportsStr)];
+    if (hostedStr) allReports = [...allReports, ...JSON.parse(hostedStr)];
+
+    // Only sync reports that have an online mapping
+    const reportsWithOnlineId = [];
+    for (const r of allReports) {
+      const onlineId = await getOnlineId(r._id);
+      if (onlineId || !String(r._id).startsWith('offline_')) {
+        reportsWithOnlineId.push({ localReport: r, onlineId: onlineId || r._id });
+      }
+    }
+
+    if (reportsWithOnlineId.length === 0) return;
+
+    console.log(`[Sync] Checking backend for updates on ${reportsWithOnlineId.length} local reports`);
+
+    for (const { localReport, onlineId } of reportsWithOnlineId) {
+      try {
+        const { data } = await api.get(`/reports/${onlineId}`, { timeout: 5000 });
+
+        if (data) {
+          // Compare status history length or latest status
+          const hasNewUpdates = (data.statusHistory || []).length > (localReport.statusHistory || []).length;
+
+          if (hasNewUpdates) {
+            console.log(`[Sync] Found new updates from backend for: ${onlineId}`);
+            // Use updateSyncedOfflineReport to merge the data
+            await updateSyncedOfflineReport(data);
+          }
+        }
+      } catch (err) {
+        // Silently skip if backend fetch fails
+      }
+    }
+  } catch (e) {
+    console.error('[Sync] Error in real-time status sync:', e);
+  }
 };

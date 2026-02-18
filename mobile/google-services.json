@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "796020932928",
+    "project_id": "safepoint-cd358",
+    "storage_bucket": "safepoint-cd358.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:796020932928:android:377e1219ec6bbc632abaa5",
+        "android_client_info": {
+          "package_name": "com.kayx2.SafePoint"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCqsq8aG5njtBvhl6TM-yUILCw0asApTqg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

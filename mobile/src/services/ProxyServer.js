@@ -203,6 +203,60 @@ const startBackendSync = async () => {
         return;
       }
 
+      // ============================================
+      // 1. PUSH UNSYNCED REPORTS TO BACKEND
+      // ============================================
+      const unsyncedReports = hostedReportsMemory.filter(r => !r.syncedToBackend && !r.fromHost);
+
+      if (unsyncedReports.length > 0) {
+        console.log(`[Proxy] Found ${unsyncedReports.length} unsynced reports. Push sync starting...`);
+
+        for (const report of unsyncedReports) {
+          try {
+            // We use the report's original user data if available
+            const payload = {
+              ...report,
+              syncedFromOffline: true,
+              // Ensure user object is preserved for "Unknown" fix
+              user: report.user || { _id: 'unknown' }
+            };
+
+            // Remove internal fields
+            delete payload._id;
+            delete payload.syncedToBackend;
+            delete payload.hostedInGroup;
+            delete payload.isOffline;
+
+            const headers = {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json',
+              'x-offline-id': report._id
+            };
+
+            const res = await axios.post(`${BASE_URL}/reports`, payload, {
+              headers,
+              timeout: 10000
+            });
+
+            if (res.status === 200 || res.status === 201) {
+              updateReportInMemory(report._id, {
+                syncedToBackend: true,
+                _id: res.data._id,
+                _originalOfflineId: report._originalOfflineId || (String(report._id).startsWith('offline_') ? report._id : null)
+              });
+              console.log('[Proxy] ✓ Synced offline report to backend:', report._id, '->', res.data._id);
+            }
+          } catch (pushErr) {
+            console.error('[Proxy] Failed to push report:', report._id, pushErr.message);
+          }
+        }
+      }
+
+
+
+      // ============================================
+      // 2. PULL UPDATES FROM BACKEND
+      // ============================================
       const response = await axios.get(`${BASE_URL}/reports`, {
         timeout: 5000,
         headers: {
@@ -228,7 +282,9 @@ const startBackendSync = async () => {
                 sharedFromOnline: existing.sharedFromOnline,
                 _isPersistentShare: existing._isPersistentShare,
                 sharedAt: existing.sharedAt,
-                hostedInGroup: true
+                hostedInGroup: true,
+                synced: true,
+                syncedToBackend: true
               });
               updated++;
 
@@ -606,10 +662,10 @@ const handleRequest = async (socket, request) => {
       socket.write(headerStr);
       socket.write(bodyBuf, (err) => {
         if (!isKeepAlive) {
-          // If not keep-alive, close after a short delay to ensure flush
+          // If not keep-alive, close after a longer delay to ensure flush on slow networks
           setTimeout(() => {
             try { socket.end(); } catch (e) { }
-          }, 100);
+          }, 1000);
         }
         resolve();
       });
@@ -620,6 +676,13 @@ const handleRequest = async (socket, request) => {
     const bodyStr = JSON.stringify({ status: 'ok', proxy: true, timestamp: Date.now() });
     await sendResponse(200, 'OK', bodyStr);
     return;
+  }
+
+  // CRITICAL FIX: Normalize URL for P2P requests
+  // Clients with BASE_URL ending in /api will send /api/p2p/..., we need /p2p/...
+  if (request.url && request.url.startsWith('/api/p2p/')) {
+    console.log(`[Proxy] Normalizing URL: ${request.url} -> ${request.url.replace('/api', '')}`);
+    request.url = request.url.replace('/api', '');
   }
 
   if (request.method === 'OPTIONS') {
@@ -651,6 +714,36 @@ const handleRequest = async (socket, request) => {
     return;
   }
 
+  const broadcastToClients = (event, excludeSocket = null) => {
+    const message = JSON.stringify(event) + '\n\n';
+    let sent = 0;
+    let failed = 0;
+
+    connectedClients.forEach((socket, clientId) => {
+      if (socket === excludeSocket) return; // Don't echo back to sender
+
+      try {
+        if (socket && !socket.destroyed) {
+          socket.write(`EVENT: ${message}`);
+          sent++;
+        } else {
+          connectedClients.delete(clientId);
+          failed++;
+        }
+      } catch (e) {
+        console.error('[Proxy] Failed to broadcast to', clientId, ':', e.message);
+        connectedClients.delete(clientId);
+        failed++;
+      }
+    });
+
+    if (sent > 0) {
+      console.log('[Proxy] Broadcasted to', sent, 'clients');
+    }
+
+    return sent;
+  };
+
   if (request.url === '/p2p/report' && request.method === 'POST') {
     // We need to reimplement handleP2PReport logic here or wrapping it? 
     // For safety, let's keep the logic inline to use our new sendResponse
@@ -675,7 +768,7 @@ const handleRequest = async (socket, request) => {
         const updated = updateReportInMemory(data.payload._id, {
           ...data.payload, statusHistory: mergedHistory, syncedToBackend: false, fromHost: false, hostedInGroup: true
         });
-        broadcastToClients({ type: 'report_updated', reportId: data.payload._id, report: updated });
+        broadcastToClients({ type: 'report_updated', reportId: data.payload._id, report: updated }, socket);
       } else {
         // Create new
         const newReport = addReportToMemory({
@@ -683,7 +776,7 @@ const handleRequest = async (socket, request) => {
           ...data.payload, isOffline: true, synced: false, syncedToBackend: false, fromHost: false, hostedInGroup: true,
           receivedAt: Date.now(), statusHistory: data.payload?.statusHistory || []
         });
-        broadcastToClients({ type: 'report_added', report: newReport });
+        broadcastToClients({ type: 'report_added', report: newReport }, socket);
         try {
           const { DeviceEventEmitter } = require('react-native');
           DeviceEventEmitter.emit('HOSTED_REPORTS_CHANGED');
@@ -719,7 +812,7 @@ const handleRequest = async (socket, request) => {
           const updated = updateReportInMemory(data.reportId, {
             status: data.status, statusHistory: [...(report.statusHistory || []), statusEntry]
           });
-          broadcastToClients({ type: 'status_update', reportId: data.reportId, status: data.status, report: updated });
+          broadcastToClients({ type: 'status_update', reportId: data.reportId, status: data.status, report: updated }, socket);
           // Try sync backend
           // ... (sync logic omitted for brevity, assumed safe) ...
         }
@@ -749,7 +842,21 @@ const handleRequest = async (socket, request) => {
   }
 
   // Backend Proxy
-  const backendUrl = `${BASE_URL}${request.url}`;
+  let normalizedPath = request.url;
+  if (BASE_URL.endsWith('/api') && normalizedPath.startsWith('/api')) {
+    normalizedPath = normalizedPath.replace('/api', '');
+  }
+
+  const backendUrl = `${BASE_URL}${normalizedPath}`;
+
+  // SELF-FORWARDING PROTECTION:
+  // If the BASE_URL discovery set us to our own proxy port, we should NOT forward
+  // because that creates an infinite loop.
+  if (BASE_URL.includes(':8080')) {
+    const errorBody = 'Proxy Self-Forwarding Loop Detected. Refusing to forward.';
+    await sendResponse(508, 'Loop Detected', errorBody, 'text/plain');
+    return;
+  }
 
   try {
     let authToken = request.headers['authorization'];

@@ -22,13 +22,16 @@
       },
       "edgeToEdgeEnabled": true,
       "package": "com.kayx2.SafePoint",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
+        "ACCESS_NETWORK_STATE",
         "ACCESS_WIFI_STATE",
         "CHANGE_WIFI_STATE",
-        "INTERNET",
+        "CHANGE_WIFI_MULTICAST_STATE",
         "NEARBY_WIFI_DEVICES",
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "INTERNET",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
       ]
@@ -63,6 +66,12 @@
       "eas": {
         "projectId": "59b4d73f-e747-476b-adab-f76d560bee0e"
       }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/59b4d73f-e747-476b-adab-f76d560bee0e"
     }
   }
 }

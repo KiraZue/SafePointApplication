@@ -11,7 +11,7 @@ const emergencyReportSchema = mongoose.Schema(
     type: {
       type: String,
       required: true,
-      enum: ['Medical', 'Fire', 'Earthquake', 'Security', 'Accident', 'Other'],
+      enum: ['medical', 'fire', 'earthquake', 'security', 'accident', 'other', 'Medical', 'Fire', 'Earthquake', 'Security', 'Accident', 'Other'],
     },
     location: {
       description: { type: String },
@@ -41,6 +41,10 @@ const emergencyReportSchema = mongoose.Schema(
     },
     // Optional image URI (for mobile reports)
     imageUri: {
+      type: String,
+    },
+    // Optional user message/details
+    message: {
       type: String,
     },
     // Flag to indicate if this was synced from offline

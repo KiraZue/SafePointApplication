@@ -39,6 +39,7 @@ app.use(express.json());
 // ============================================
 app.use('/api/users', authRoutes);
 app.use('/api/reports', reportRoutes);
+app.use('/api/notifications', require('./routes/notificationRoutes'));
 
 app.get('/', (req, res) => {
   res.send('API is running...');
@@ -46,8 +47,8 @@ app.get('/', (req, res) => {
 
 // Health check endpoint for proxy verification
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: Date.now(),
     uptime: process.uptime(),
     connections: io.engine.clientsCount
@@ -55,8 +56,8 @@ app.get('/api/health', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: Date.now(),
     uptime: process.uptime(),
     connections: io.engine.clientsCount
@@ -72,14 +73,14 @@ let connectedClients = 0;
 io.on('connection', async (socket) => {
   connectedClients++;
   console.log('[Socket.io] Client connected:', socket.id, '| Total clients:', connectedClients);
-  
+
   try {
     // Send initial active reports on connection
     const active = await EmergencyReport.find({ status: { $ne: 'RESOLVED' } })
       .populate('user', 'firstName lastName role userCode')
       .populate('statusHistory.updatedBy', 'firstName lastName role userCode')
-      .select('_id type status location createdAt updatedAt user statusHistory');
-    
+      .select('_id type status location message createdAt updatedAt user statusHistory');
+
     socket.emit('reports:active', active);
     console.log('[Socket.io] Sent', active.length, 'active reports to', socket.id);
   } catch (err) {
@@ -94,7 +95,7 @@ io.on('connection', async (socket) => {
         .populate('statusHistory.updatedBy', 'firstName lastName role userCode')
         .sort({ createdAt: -1 })
         .limit(100);
-      
+
       socket.emit('reports:all', allReports);
       console.log('[Socket.io] Sent all reports to', socket.id);
     } catch (err) {
@@ -106,14 +107,14 @@ io.on('connection', async (socket) => {
   socket.on('report:update_status', async (data) => {
     try {
       const { reportId, status, userId } = data;
-      
+
       if (!reportId || !status || !userId) {
         socket.emit('report:update_error', { message: 'Missing required fields' });
         return;
       }
 
       const report = await EmergencyReport.findById(reportId);
-      
+
       if (!report) {
         socket.emit('report:update_error', { message: 'Report not found' });
         return;
@@ -130,32 +131,35 @@ io.on('connection', async (socket) => {
           updatedBy: userId,
           timestamp: new Date()
         });
-        
+
         await report.save();
-        
+
         const populated = await EmergencyReport.findById(report._id)
           .populate('user', 'firstName lastName role userCode')
           .populate('statusHistory.updatedBy', 'firstName lastName role userCode');
-        
+
         // Broadcast to ALL clients
         io.emit('report:updated', populated);
         console.log('[Socket.io] Broadcasted status update for report:', reportId);
 
-        // Send push notification for status update
+        // Send targeted push notification to the report owner
         try {
-          const activeCount = await EmergencyReport.countDocuments({ status: { $ne: 'RESOLVED' } });
-          const updater = await User.findById(userId);
-          
-          await sendPushNotification({
-            title: `🔄 Report Status Updated: ${status}`,
-            body: `Report: ${populated.type}\nUpdated by: ${updater?.firstName} ${updater?.lastName}\nStatus: ${status}`,
-            data: { 
-              type: 'STATUS_UPDATE', 
-              reportId: populated._id,
-              status: status
-            },
-            badge: activeCount
-          });
+          if (populated.user && populated.user._id) {
+            const updater = await User.findById(userId);
+            const updaterName = updater ? `${updater.firstName} ${updater.lastName}` : 'Someone';
+            const updaterRole = updater?.role ? ` (${updater.role})` : '';
+
+            await sendPushNotification({
+              userIds: [populated.user._id],
+              title: `🔄 Status Updated: ${status}`,
+              body: `${updaterName}${updaterRole} updated your ${populated.type} report to: ${status}`,
+              data: {
+                type: 'STATUS_UPDATE',
+                reportId: populated._id,
+                status: status
+              }
+            });
+          }
         } catch (pushErr) {
           console.error('[Push] Failed to send status update notification:', pushErr);
         }
@@ -171,14 +175,14 @@ io.on('connection', async (socket) => {
     try {
       const { userId, groupName } = data;
       const user = await User.findById(userId);
-      
+
       console.log(`[Socket.io] Wi-Fi Direct group started by ${user?.firstName} (${groupName})`);
-      
+
       await sendPushNotification({
         title: '📶 Wi-Fi Direct Group Started',
         body: `${user?.firstName} ${user?.lastName} started a group: "${groupName}". Connect to stay safe offline.`,
-        data: { 
-          type: 'WIFI_GROUP_STARTED', 
+        data: {
+          type: 'WIFI_GROUP_STARTED',
           userId: userId,
           groupName: groupName
         }
@@ -192,14 +196,14 @@ io.on('connection', async (socket) => {
   socket.on('report:acknowledge', async (data) => {
     try {
       const { reportId, userId } = data;
-      
+
       if (!reportId || !userId) {
         socket.emit('report:update_error', { message: 'Missing required fields' });
         return;
       }
 
       const report = await EmergencyReport.findById(reportId);
-      
+
       if (!report) {
         socket.emit('report:update_error', { message: 'Report not found' });
         return;
@@ -213,19 +217,19 @@ io.on('connection', async (socket) => {
         if (report.status === 'REPORTED') {
           report.status = 'ACKNOWLEDGED';
         }
-        
+
         report.statusHistory.push({
           status: 'ACKNOWLEDGED',
           updatedBy: userId,
           timestamp: new Date()
         });
-        
+
         await report.save();
-        
+
         const populated = await EmergencyReport.findById(report._id)
           .populate('user', 'firstName lastName role userCode')
           .populate('statusHistory.updatedBy', 'firstName lastName role userCode');
-        
+
         // Broadcast to ALL clients
         io.emit('report:updated', populated);
         console.log('[Socket.io] Broadcasted acknowledgment for report:', reportId);
@@ -262,12 +266,12 @@ const cleanupOldReports = async () => {
   try {
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
+
     const result = await EmergencyReport.deleteMany({
       status: 'RESOLVED',
       updatedAt: { $lt: thirtyDaysAgo }
     });
-    
+
     if (result.deletedCount > 0) {
       console.log('[Cleanup] Deleted', result.deletedCount, 'old resolved reports');
     }
@@ -285,7 +289,7 @@ const scheduleCleanup = () => {
     3, 0, 0
   );
   const msToMidnight = night.getTime() - now.getTime();
-  
+
   setTimeout(() => {
     cleanupOldReports();
     setInterval(cleanupOldReports, 24 * 60 * 60 * 1000);
@@ -327,10 +331,48 @@ const seedAdmin = async () => {
 seedAdmin();
 
 // ============================================
+// BONJOUR / mDNS DISCOVERY
+// ============================================
+let bonjourInstance = null;
+const PORT = process.env.PORT || 5000;
+
+const startBonjour = () => {
+  try {
+    console.log('[Bonjour] Initializing discovery service...');
+    // Lazy initialize to avoid early bind errors
+    bonjourInstance = require('bonjour')();
+
+    const service = bonjourInstance.publish({
+      name: 'SafePoint Backend',
+      type: 'http',
+      port: PORT,
+      txt: { path: '/api/health' }
+    });
+
+    service.on('error', (err) => {
+      console.error('[Bonjour] Publication error:', err);
+    });
+
+    service.on('up', () => {
+      console.log('[Bonjour] Service is UP!');
+      console.log('[Bonjour] Service published: SafePoint Backend (http)');
+      console.log(`[Bonjour]   Type: _http._tcp.local.`);
+      console.log(`[Bonjour]   Port: ${PORT}`);
+      console.log('[Bonjour]   Check path: /api/health');
+    });
+
+  } catch (err) {
+    console.error('[Bonjour] Critical failure starting Bonjour:', err.message);
+  }
+};
+
+// Delay discovery start by 5 seconds to let network interfaces stabilize
+console.log('[Bonjour] Discovery service will start in 5 seconds...');
+setTimeout(startBonjour, 5000);
+
+// ============================================
 // SERVER STARTUP
 // ============================================
-
-const PORT = process.env.PORT || 5000;
 
 server.listen(PORT, () => {
   console.log('╔═══════════════════════════════════════════════════════╗');
@@ -346,16 +388,16 @@ server.listen(PORT, () => {
 
 const gracefulShutdown = async (signal) => {
   console.log(`\n[${signal}] Shutting down gracefully...`);
-  
+
   io.close(() => {
     console.log('[Socket.io] All connections closed');
   });
-  
+
   server.close(() => {
     console.log('[HTTP] Server closed');
     process.exit(0);
   });
-  
+
   setTimeout(() => {
     console.error('[Shutdown] Forcing shutdown...');
     process.exit(1);

@@ -2,6 +2,7 @@ import axios from 'axios';
 import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 import NetInfo from '@react-native-community/netinfo';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export function resolveBaseURL() {
   let base = 'http://localhost:5000/api';
@@ -41,31 +42,77 @@ export const isConnectedToWifiDirect = () => {
 };
 
 export const initApiConfig = async () => {
-  const oldBase = BASE_URL;
-  BASE_URL = resolveBaseURL();
-  api.defaults.baseURL = BASE_URL;
-  
-  // Reset Wi-Fi Direct connection if URL changed away from proxy
-  if (oldBase.includes('192.168.49.1') && !BASE_URL.includes('192.168.49.1')) {
-    isWifiDirectConnected = false;
+  try {
+    const customUrl = await AsyncStorage.getItem('CUSTOM_BASE_URL');
+    if (customUrl) {
+      console.log('[API] Loading custom BASE_URL:', customUrl);
+      BASE_URL = customUrl;
+      api.defaults.baseURL = BASE_URL;
+
+      if (BASE_URL.includes('192.168.49.1')) {
+        isWifiDirectConnected = true;
+      }
+    } else {
+      const oldBase = BASE_URL;
+      BASE_URL = resolveBaseURL();
+      api.defaults.baseURL = BASE_URL;
+
+      // Reset Wi-Fi Direct connection if URL changed away from proxy
+      if (oldBase.includes('192.168.49.1') && !BASE_URL.includes('192.168.49.1')) {
+        isWifiDirectConnected = false;
+      }
+    }
+  } catch (e) {
+    console.error('[API] Failed to load custom URL:', e);
   }
-  
+
   console.log('[API] Initialized with BASE_URL:', BASE_URL);
 };
+
+export const setCustomBaseURL = async (url) => {
+  try {
+    if (!url) {
+      await AsyncStorage.removeItem('CUSTOM_BASE_URL');
+      BASE_URL = resolveBaseURL();
+    } else {
+      let formattedUrl = url.trim();
+      if (!formattedUrl.startsWith('http')) {
+        formattedUrl = `http://${formattedUrl}`;
+      }
+      if (!formattedUrl.includes(':')) {
+        formattedUrl = `${formattedUrl}:5000/api`;
+      } else if (!formattedUrl.endsWith('/api')) {
+        formattedUrl = `${formattedUrl}/api`;
+      }
+
+      await AsyncStorage.setItem('CUSTOM_BASE_URL', formattedUrl);
+      BASE_URL = formattedUrl;
+    }
+
+    api.defaults.baseURL = BASE_URL;
+    updateApiConfig(BASE_URL);
+    return BASE_URL;
+  } catch (e) {
+    console.error('[API] Failed to save custom URL:', e);
+    throw e;
+  }
+};
+
+export const getApiBaseUrl = () => BASE_URL;
 
 export const updateApiConfig = (newBaseUrl) => {
   if (newBaseUrl) {
     const oldBase = BASE_URL;
     BASE_URL = newBaseUrl;
     api.defaults.baseURL = BASE_URL;
-    
+
     // Update Wi-Fi Direct connection state based on URL
     if (newBaseUrl.includes('192.168.49.1')) {
       isWifiDirectConnected = true;
     } else if (oldBase.includes('192.168.49.1')) {
       isWifiDirectConnected = false;
     }
-    
+
     console.log('[API] Updated BASE_URL to:', BASE_URL, '| Wi-Fi Direct:', isWifiDirectConnected);
   }
 };
@@ -76,7 +123,7 @@ export const checkConnectivity = async () => {
     const netInfo = await NetInfo.fetch();
     const hasInternet = netInfo.isConnected && netInfo.isInternetReachable;
     const isWifiDirectHost = BASE_URL.includes('192.168.49.1');
-    
+
     return {
       hasInternet,
       isWifiDirectHost,

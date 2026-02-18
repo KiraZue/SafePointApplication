@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { useNavigation, useRoute, useFocusEffect } from '@react-navigation/native';
 import Map2D from '../components/Map2D';
 import ProfileSidebar from '../components/ProfileSidebar';
+import { ReportSelectionModal } from '../components/ReportModals';
 import api, { BASE_URL, isConnectedToWifiDirect } from '../services/api';
 import io from 'socket.io-client';
 import Constants from 'expo-constants';
@@ -27,7 +28,6 @@ const HomeScreen = () => {
   const { user, logout } = useAuth();
   const navigation = useNavigation();
   const route = useRoute();
-  const [showEmergencyTypes, setShowEmergencyTypes] = useState(false);
   const [latestAlert, setLatestAlert] = useState(null);
   const [socket, setSocket] = useState(null);
   const [isAlertVisible, setIsAlertVisible] = useState(true);
@@ -38,6 +38,31 @@ const HomeScreen = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('OFFLINE');
   const [activeReportsCount, setActiveReportsCount] = useState(0);
+  const [isSelectingLocation, setIsSelectingLocation] = useState(false);
+  const [selectionModalVisible, setSelectionModalVisible] = useState(false);
+  const [selectedMarkerReports, setSelectedMarkerReports] = useState([]);
+  const [selectedMarkerBuilding, setSelectedMarkerBuilding] = useState(null);
+  const [allActiveReports, setAllActiveReports] = useState([]);
+  const [sidebarTab, setSidebarTab] = useState(null);
+  const [isDetailsVisible, setIsDetailsVisible] = useState(false);
+
+  // Handle openSettings param from Hotspot modal navigation
+  useEffect(() => {
+    if (route?.params?.openSettings) {
+      setSidebarTab('Settings');
+      setShowProfile(true);
+      // Clear the param to prevent re-triggering on focus
+      navigation.setParams({ openSettings: undefined });
+    }
+  }, [route?.params?.openSettings]);
+
+  // Reset details view when alert changes
+  useEffect(() => {
+    if (displayAlert?._id !== latestAlert?._id) {
+      setIsDetailsVisible(false);
+      setLatestAlert(displayAlert);
+    }
+  }, [displayAlert]);
 
   // Register for push notifications
   useEffect(() => {
@@ -131,11 +156,14 @@ const HomeScreen = () => {
 
       // Still fetch active reports for the latest alert display if needed
       const activeRes = await api.get('/reports/active');
-      if (Array.isArray(activeRes.data) && activeRes.data.length > 0) {
-        const latest = [...activeRes.data].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
-        setLatestAlert(latest);
-      } else {
-        setLatestAlert(null);
+      if (Array.isArray(activeRes.data)) {
+        setAllActiveReports(activeRes.data);
+        if (activeRes.data.length > 0) {
+          const latest = [...activeRes.data].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0];
+          setLatestAlert(latest);
+        } else {
+          setLatestAlert(null);
+        }
       }
     } catch (e) {
       console.log('[Home] Error fetching active reports:', e);
@@ -214,14 +242,10 @@ const HomeScreen = () => {
     }
   }, [latestAlert, pulseAnim]);
 
-  const handleSOSPress = () => {
-    setShowEmergencyTypes(!showEmergencyTypes);
-  };
+  const mapRef = useRef(null);
 
-  const handleEmergencySelect = async (type) => {
-    setShowEmergencyTypes(false);
-
-    // Check if user can submit reports (online, connected to Wi-Fi Direct host, or hosting)
+  const handleSOSPress = async () => {
+    // Check connectivity BEFORE starting flow
     const netInfo = await NetInfo.fetch();
     const hasInternet = netInfo.isConnected && netInfo.isInternetReachable;
     const isWifiDirectHost = BASE_URL.includes('192.168.49.1');
@@ -230,7 +254,7 @@ const HomeScreen = () => {
     if (!hasInternet && !isWifiDirectHost && !isHosting) {
       Alert.alert(
         'No Connection',
-        'You need to connect to the internet, host a Wi-Fi Direct group, or connect to a host to submit emergency reports.',
+        'You are currently offline. You need to connect to the internet, host a Wi-Fi Direct group, or connect to a host to submit emergency reports.',
         [
           { text: 'Cancel', style: 'cancel' },
           {
@@ -242,7 +266,27 @@ const HomeScreen = () => {
       return;
     }
 
-    navigation.navigate('Report', { type });
+    // Start the report flow in the Map component
+    if (mapRef.current) {
+      mapRef.current.startReportFlow();
+    }
+  };
+
+  const handleReportIconPress = (reports, building) => {
+    if (reports.length === 1) {
+      // Direct navigation for single report
+      navigation.navigate('Reports', { highlightId: reports[0]._id });
+    } else if (reports.length > 1) {
+      // Show selection modal for multiple reports
+      setSelectedMarkerReports(reports);
+      setSelectedMarkerBuilding(building);
+      setSelectionModalVisible(true);
+    }
+  };
+
+  const handleReportSelect = (report) => {
+    setSelectionModalVisible(false);
+    navigation.navigate('Reports', { highlightId: report._id });
   };
 
   useFocusEffect(
@@ -329,7 +373,7 @@ const HomeScreen = () => {
     return '⚠️ Immediate assistance may be required. Please stay alert and respond accordingly.';
   })();
   const reporterName = displayAlert?.user ? `${displayAlert.user.lastName}, ${displayAlert.user.firstName} (${displayAlert.user.role})` : 'Unknown';
-  const locationText = displayAlert?.location?.x != null && displayAlert?.location?.y != null ? `x:${Math.round(displayAlert.location.x)} y:${Math.round(displayAlert.location.y)}` : 'Not specified';
+  const locationText = displayAlert?.location?.description || (displayAlert?.location?.x != null ? `${Math.round(displayAlert.location.x)}, ${Math.round(displayAlert.location.y)}` : 'Not specified');
   const timeText = displayAlert?.createdAt ? new Date(displayAlert.createdAt).toLocaleString() : '';
 
   const toggleAlertVisibility = () => {
@@ -390,9 +434,35 @@ const HomeScreen = () => {
             <Text style={styles.alertTitle}>{alertTitle}</Text>
             <Text style={styles.alertLine}>{alertBody}</Text>
             <Text style={styles.alertLine}>Reporter: {reporterName}</Text>
-            <Text style={styles.alertLine}>Location: {locationText}</Text>
+            <Text style={styles.alertLine}>Location: {displayAlert.location?.description || locationText}</Text>
             <Text style={styles.alertLine}>Time Reported: {timeText}</Text>
             <Text style={styles.alertFooter}>{alertFooter}</Text>
+
+            {!isDetailsVisible ? (
+              <TouchableOpacity
+                style={styles.detailsToggleBtn}
+                onPress={() => setIsDetailsVisible(true)}
+              >
+                <Text style={styles.detailsToggleText}>Show Message</Text>
+                <Ionicons name="chevron-down" size={14} color="#c62828" />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.expandedDetails}>
+                <View style={styles.divider} />
+                <Text style={styles.alertDetailLabel}>Message:</Text>
+                <Text style={styles.alertDetailText}>{displayAlert.message || "No report message provided."}</Text>
+
+
+
+                <TouchableOpacity
+                  style={styles.detailsToggleBtn}
+                  onPress={() => setIsDetailsVisible(false)}
+                >
+                  <Text style={styles.detailsToggleText}>Hide Message</Text>
+                  <Ionicons name="chevron-up" size={14} color="#c62828" />
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
         </View>
       )}
@@ -442,32 +512,19 @@ const HomeScreen = () => {
       {/* Map Container */}
       <View style={styles.mapContainer}>
         <Map2D
-          onConfirmLocation={async ({ xPct, yPct }) => {
-            // Check connectivity before allowing location selection
-            const netInfo = await NetInfo.fetch();
-            const hasInternet = netInfo.isConnected && netInfo.isInternetReachable;
-            const isWifiDirectHost = BASE_URL.includes('192.168.49.1');
-            const isHosting = isProxyActive();
-
-            if (!hasInternet && !isWifiDirectHost && !isHosting) {
-              Alert.alert(
-                'No Connection',
-                'You need to connect to the internet, host a Wi-Fi Direct group, or connect to a host to submit emergency reports.',
-                [
-                  { text: 'Cancel', style: 'cancel' },
-                  {
-                    text: 'Connect Now',
-                    onPress: () => navigation.navigate('WifiDirect')
-                  }
-                ]
-              );
-              return;
-            }
-
-            navigation.navigate('Report', { type: 'Other', presetLocation: { x: xPct, y: yPct } });
+          ref={mapRef}
+          activeReports={allActiveReports}
+          onReportSubmit={(reportData) => {
+            navigation.navigate('Report', {
+              type: reportData.type,
+              locationName: reportData.locationName,
+              coordinates: reportData.coordinates
+            });
           }}
-          highlightId={displayAlert?._id}
-          focusTo={displayAlert?.location}
+          highlightReport={route?.params?.highlightReport || displayAlert}
+          onFlowStart={() => setIsSelectingLocation(true)}
+          onFlowEnd={() => setIsSelectingLocation(false)}
+          onReportPress={handleReportIconPress}
         />
       </View>
 
@@ -479,9 +536,18 @@ const HomeScreen = () => {
               <Animated.View style={[styles.profileBackdrop, { right: panelWidth, opacity: overlayOpacity }]} />
             </TouchableWithoutFeedback>
           </View>
-          <ProfileSidebar visible={showProfile} onClose={() => setShowProfile(false)} user={{ ...user, logout }} panelWidth={panelWidth} />
+          <ProfileSidebar visible={showProfile} onClose={() => { setShowProfile(false); setSidebarTab(null); }} user={{ ...user, logout }} panelWidth={panelWidth} initialTab={sidebarTab} />
         </>
       )}
+
+      {/* Selection Modal */}
+      <ReportSelectionModal
+        visible={selectionModalVisible}
+        reports={selectedMarkerReports}
+        buildingName={selectedMarkerBuilding?.name}
+        onSelect={handleReportSelect}
+        onClose={() => setSelectionModalVisible(false)}
+      />
 
       {/* Emergency Action Bar - Bottom */}
       <View style={styles.actionBar}>
@@ -547,76 +613,6 @@ const HomeScreen = () => {
           </TouchableOpacity>
         </View>
       </View>
-
-      {/* Emergency Type Modal/Popup */}
-      {showEmergencyTypes && (
-        <View style={styles.popupContainer}>
-          <View style={styles.popup}>
-            <View style={styles.popupRow}>
-              <TouchableOpacity
-                style={styles.typeButton}
-                onPress={() => handleEmergencySelect('Medical')}
-              >
-                <View style={[styles.iconCircle, { borderColor: '#e53935' }]}>
-                  <Ionicons name="medkit" size={24} color="#e53935" />
-                </View>
-                <Text style={styles.typeText}>Medical</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.typeButton}
-                onPress={() => handleEmergencySelect('Fire')}
-              >
-                <View style={[styles.iconCircle, { borderColor: '#f57c00' }]}>
-                  <Ionicons name="flame" size={24} color="#f57c00" />
-                </View>
-                <Text style={styles.typeText}>Fire</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.typeButton}
-                onPress={() => handleEmergencySelect('Earthquake')}
-              >
-                <View style={[styles.iconCircle, { borderColor: '#2e7d32' }]}>
-                  <Ionicons name="pulse" size={24} color="#2e7d32" />
-                </View>
-                <Text style={styles.typeText}>Earthquake</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={styles.popupRow}>
-              <TouchableOpacity
-                style={styles.typeButton}
-                onPress={() => handleEmergencySelect('Security')}
-              >
-                <View style={[styles.iconCircle, { borderColor: '#fbc02d' }]}>
-                  <Ionicons name="shield" size={24} color="#fbc02d" />
-                </View>
-                <Text style={styles.typeText}>Security</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.typeButton}
-                onPress={() => handleEmergencySelect('Other')}
-              >
-                <View style={[styles.iconCircle, { borderColor: '#555' }]}>
-                  <Ionicons name="ellipsis-horizontal" size={24} color="#555" />
-                </View>
-                <Text style={styles.typeText}>Other</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.typeButton}
-                onPress={() => handleEmergencySelect('Accident')}
-              >
-                <View style={[styles.iconCircle, { borderColor: '#fb8c00' }]}>
-                  <Ionicons name="accessibility-outline" size={24} color="#fb8c00" />
-                </View>
-                <Text style={styles.typeText}>Accident</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-          {/* Arrow pointing down to SOS button */}
-          <View style={styles.arrowDown} />
-        </View>
-      )}
     </SafeAreaView>
   );
 };
@@ -686,6 +682,42 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 8,
     fontWeight: '600',
+  },
+  detailsToggleBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    paddingVertical: 4,
+    marginBottom: -10,
+  },
+  detailsToggleText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#c62828',
+    marginRight: 4,
+  },
+  expandedDetails: {
+    width: '100%',
+    marginTop: 5,
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#eee',
+    marginVertical: 10,
+    width: '100%',
+  },
+  alertDetailLabel: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#666',
+    marginTop: 6,
+    textTransform: 'uppercase',
+  },
+  alertDetailText: {
+    fontSize: 12,
+    color: '#333',
+    marginBottom: 2,
   },
 
   // Header
