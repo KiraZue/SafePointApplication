@@ -15,6 +15,10 @@ import NetInfo from '@react-native-community/netinfo';
 import { isProxyActive } from '../services/ProxyServer';
 import * as Notifications from 'expo-notifications';
 
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const NOTC_HEIGHT = Math.round(SCREEN_WIDTH * (1980 / 1080));
+const NOTC_IMAGE = require('../../assets/SafePoint-assets/NOTC (2).png');
+
 // Configure notification behavior
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -45,6 +49,16 @@ const HomeScreen = () => {
   const [allActiveReports, setAllActiveReports] = useState([]);
   const [sidebarTab, setSidebarTab] = useState(null);
   const [isDetailsVisible, setIsDetailsVisible] = useState(false);
+
+  // Animate backdrop opacity when sidebar opens/closes
+  // opacity is fully supported by the native driver — must stay consistent
+  useEffect(() => {
+    Animated.timing(overlayOpacity, {
+      toValue: showProfile ? 0.45 : 0,
+      duration: showProfile ? 300 : 250,
+      useNativeDriver: true,
+    }).start();
+  }, [showProfile]);
 
   // Handle openSettings param from Hotspot modal navigation
   useEffect(() => {
@@ -346,6 +360,8 @@ const HomeScreen = () => {
   }, [showProfile, overlayOpacity]);
 
   const displayAlert = route?.params?.report || latestAlert;
+
+
   const iconColor = displayAlert?.status === 'RESOLVED' ? '#1976d2' : '#d32f2f';
   const alertTitle = (() => {
     if (!displayAlert?.type) return '';
@@ -399,7 +415,7 @@ const HomeScreen = () => {
     <SafeAreaView style={styles.container}>
       {/* Alert notification at top center */}
       {displayAlert && (
-        <View style={styles.topAlertContainer}>
+        <View style={styles.topAlertContainer} pointerEvents="box-none">
           <TouchableOpacity
             style={styles.topAlert}
             onPress={toggleAlertVisibility}
@@ -429,7 +445,7 @@ const HomeScreen = () => {
 
       {/* Alert Details Box */}
       {displayAlert && isAlertVisible && (
-        <View style={styles.alertDetailsContainer}>
+        <View style={styles.alertDetailsContainer} pointerEvents="box-none">
           <View style={styles.alertBox}>
             <Text style={styles.alertTitle}>{alertTitle}</Text>
             <Text style={styles.alertLine}>{alertBody}</Text>
@@ -480,7 +496,7 @@ const HomeScreen = () => {
           </View>
           <TouchableOpacity onPress={() => setShowProfile(true)} activeOpacity={0.85}>
             <View style={styles.profileIconContainer}>
-              <Ionicons name="menu" size={32} color="#2b4266" />
+              <Ionicons name="menu" size={32} color="#1B3F6E" />
             </View>
           </TouchableOpacity>
         </View>
@@ -489,14 +505,14 @@ const HomeScreen = () => {
       {/* Connection Indicator - Absolute Positioned below profile */}
       <View style={{
         position: 'absolute',
-        top: 100,
+        top: 130,
         right: 16,
         alignItems: 'center',
         zIndex: 20
       }}>
         <Ionicons
           name={connectionIcon.name}
-          size={24}
+          size={28}
           color={connectionIcon.color}
         />
         <Text style={{
@@ -528,17 +544,22 @@ const HomeScreen = () => {
         />
       </View>
 
-      {/* Profile Sidebar */}
-      {showProfile && (
-        <>
-          <View style={styles.profileOverlay}>
-            <TouchableWithoutFeedback onPress={() => setShowProfile(false)}>
-              <Animated.View style={[styles.profileBackdrop, { right: panelWidth, opacity: overlayOpacity }]} />
-            </TouchableWithoutFeedback>
-          </View>
-          <ProfileSidebar visible={showProfile} onClose={() => { setShowProfile(false); setSidebarTab(null); }} user={{ ...user, logout }} panelWidth={panelWidth} initialTab={sidebarTab} />
-        </>
-      )}
+      {/* Profile Sidebar - always mounted so close animation can run */}
+      <View
+        pointerEvents={showProfile ? 'auto' : 'none'}
+        style={styles.profileOverlay}
+      >
+        <TouchableWithoutFeedback onPress={() => setShowProfile(false)}>
+          <Animated.View style={[styles.profileBackdrop, { right: panelWidth, opacity: overlayOpacity }]} />
+        </TouchableWithoutFeedback>
+      </View>
+      <ProfileSidebar
+        visible={showProfile}
+        onClose={() => { setShowProfile(false); setSidebarTab(null); }}
+        user={{ ...user, logout }}
+        panelWidth={panelWidth}
+        initialTab={sidebarTab}
+      />
 
       {/* Selection Modal */}
       <ReportSelectionModal
@@ -551,10 +572,14 @@ const HomeScreen = () => {
 
       {/* Emergency Action Bar - Bottom */}
       <View style={styles.actionBar}>
-        {/* Curved background arcs */}
-        <View style={styles.leftArc} />
-        <View style={styles.rightArc} />
-        <View style={styles.centerStrip} />
+        {/* NOTC.png clipped — only shows its bottom 200dp (the dark navy wave) */}
+        <View style={styles.notchClip}>
+          <Image
+            source={NOTC_IMAGE}
+            style={styles.notchImage}
+            resizeMode="stretch"
+          />
+        </View>
 
         {/* Emergency Hotlines - Left */}
         <View style={styles.leftButtonContainer}>
@@ -564,7 +589,7 @@ const HomeScreen = () => {
             activeOpacity={0.85}
           >
             <View style={styles.iconCircleWhite}>
-              <Ionicons name="call" size={32} color="#2b4266" />
+              <Ionicons name="call" size={32} color="#1B3F6E" />
             </View>
             <Text style={styles.actionTextLight}>Emergency Hotlines</Text>
           </TouchableOpacity>
@@ -602,7 +627,7 @@ const HomeScreen = () => {
             activeOpacity={0.85}
           >
             <View style={styles.iconCircleWhite}>
-              <Ionicons name="alert-circle" size={32} color="#2b4266" />
+              <Ionicons name="alert-circle" size={32} color="#1B3F6E" />
               {activeReportsCount > 0 && (
                 <View style={styles.badgeContainer}>
                   <Text style={styles.badgeText}>{activeReportsCount}</Text>
@@ -755,7 +780,7 @@ const styles = StyleSheet.create({
   headerName: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#2b4266',
+    color: '#1B3F6E',
   },
   headerRole: {
     fontSize: 12,
@@ -792,55 +817,49 @@ const styles = StyleSheet.create({
     backgroundColor: '#e0e0e0',
   },
 
-  // Action Bar - Bottom navigation
+  // Action Bar - floats over the bottom of the map
   actionBar: {
-    height: 160,
+    height: 280,
     backgroundColor: 'transparent',
-    position: 'relative',
-  },
-  leftArc: {
     position: 'absolute',
+    bottom: 0,
     left: 0,
-    bottom: 0,
-    width: '50%',
-    height: 160,
-    backgroundColor: '#2b4266',
-    borderTopRightRadius: 200,
-    borderBottomRightRadius: 0,
-  },
-  rightArc: {
-    position: 'absolute',
     right: 0,
-    bottom: 0,
-    width: '50%',
-    height: 160,
-    backgroundColor: '#2b4266',
-    borderTopLeftRadius: 200,
-    borderBottomLeftRadius: 0,
+    zIndex: 1,
+    overflow: 'visible',
   },
-  centerStrip: {
+  // Clipping container — shows only the bottom 200dp of the 714dp NOTC image
+  notchClip: {
     position: 'absolute',
+    top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    height: 60,
-    backgroundColor: '#2b4266',
+    overflow: 'hidden',
+  },
+  notchImage: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    width: SCREEN_WIDTH,
+    height: NOTC_HEIGHT,
   },
   leftButtonContainer: {
     position: 'absolute',
-    left: 15,
-    bottom: 30,
+    left: 10,
+    bottom: 10,
     alignItems: 'center',
   },
   rightButtonContainer: {
     position: 'absolute',
-    right: 15,
-    bottom: 30,
+    right: 10,
+    bottom: 10,
     alignItems: 'center',
   },
   actionButton: {
     alignItems: 'center',
     width: 100,
+
   },
   iconCircleWhite: {
     width: 64,
@@ -889,11 +908,11 @@ const styles = StyleSheet.create({
   // SOS Button
   sosButton: {
     alignItems: 'center',
-    marginBottom: 50,
     position: 'absolute',
     left: '50%',
     marginLeft: -60,
-    bottom: 20,
+    bottom: 60,
+    zIndex: 3,
   },
   sosCircle: {
     width: 120,

@@ -9,7 +9,7 @@ import Animated, {
   withRepeat,
   Easing
 } from 'react-native-reanimated';
-import Svg, { Path, G } from 'react-native-svg';
+import Svg, { Path, G, Text as SvgText } from 'react-native-svg';
 import { BUILDINGS, SVG_WIDTH, SVG_HEIGHT, BASE_WIDTH, BASE_HEIGHT, EMERGENCY_TYPES } from '../constants/mapData';
 
 const AnimatedPath = Animated.createAnimatedComponent(Path);
@@ -144,14 +144,14 @@ const EvacuationRoute = React.memo(({ type }) => {
   const color = type === 'fire' ? '#F44336' : '#FF9800';
 
   return (
-    <Svg style={styles.svgOverlayFlow} viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`}>
+    <Svg style={styles.svgOverlayFlow} viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} pointerEvents="none">
       <G transform="translate(165, 275) scale(1.0)">
         {/* Glow effect for prominence */}
         <Path
           d={pathData}
           stroke={color}
-          strokeWidth={15}
-          strokeOpacity={0.2}
+          strokeWidth={30}
+          strokeOpacity={0.25}
           fill="none"
           strokeLinecap="round"
         />
@@ -159,13 +159,121 @@ const EvacuationRoute = React.memo(({ type }) => {
         <AnimatedPath
           d={pathData}
           stroke={color}
-          strokeWidth={8}
-          strokeDasharray="15, 15"
+          strokeWidth={16}
+          strokeDasharray="22, 18"
           animatedProps={animatedProps}
           fill="none"
           strokeLinecap="round"
         />
       </G>
+    </Svg>
+  );
+});
+
+// Earthquake evacuation zone highlights - pulsing orange boxes over Evacuation Area + Parking Lot
+const EvacuationHighlight = React.memo(({ type }) => {
+  const opacity = useSharedValue(0);
+
+  useEffect(() => {
+    if (type === 'earthquake') {
+      opacity.value = withRepeat(
+        withTiming(0.65, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+        -1,
+        true
+      );
+    } else {
+      opacity.value = withTiming(0, { duration: 300 });
+    }
+  }, [type]);
+
+  const animatedProps = useAnimatedProps(() => ({
+    fillOpacity: opacity.value,
+    strokeOpacity: Math.min(opacity.value * 1.5, 1),
+  }));
+
+  if (type !== 'earthquake') return null;
+
+  const zones = [
+    {
+      id: 'evacuation_area',
+      path: 'M1935,880 L1742,880 L1739,930 L1626,932 L1627,1145 L1933,1146 Z',
+      label: 'Evacuation',
+      label2: 'Area',
+      cx: 1780,
+      cy: 1045,
+    },
+    {
+      id: 'parking_lot',
+      path: 'M1186,714 L1536,714 L1536,945 L1186,950 Z',
+      label: 'Evacuation Area',
+      cx: 1361,
+      cy: 850,
+    },
+  ];
+
+  return (
+    <Svg style={styles.svgOverlayFlow} viewBox={`0 0 ${SVG_WIDTH} ${SVG_HEIGHT}`} pointerEvents="none">
+      {zones.map(zone => (
+        <G key={zone.id}>
+          {/* Pulsing fill */}
+          <AnimatedPath
+            d={zone.path}
+            fill="#FF9800"
+            stroke="#FF6F00"
+            strokeWidth={14}
+            animatedProps={animatedProps}
+          />
+          {/* Text shadow for readability */}
+          <SvgText
+            x={zone.cx}
+            y={zone.label2 ? zone.cy - 38 : zone.cy}
+            fill="rgba(0,0,0,0.45)"
+            fontSize={45}
+            fontWeight="bold"
+            textAnchor="middle"
+            dy={2}
+            dx={2}
+          >
+            {zone.label}
+          </SvgText>
+          <SvgText
+            x={zone.cx}
+            y={zone.label2 ? zone.cy - 38 : zone.cy}
+            fill="white"
+            fontSize={45}
+            fontWeight="bold"
+            textAnchor="middle"
+          >
+            {zone.label}
+          </SvgText>
+          {zone.label2 && (
+            <>
+              <SvgText
+                x={zone.cx}
+                y={zone.cy + 38}
+                fill="rgba(0,0,0,0.45)"
+                fontSize={50}
+                fontWeight="bold"
+                textAnchor="middle"
+                dy={2}
+                dx={2}
+              >
+                {zone.label2}
+              </SvgText>
+              <SvgText
+                x={zone.cx}
+                y={zone.cy + 38}
+                fill="white"
+                fontSize={50}
+                fontWeight="bold"
+                textAnchor="middle"
+              >
+                {zone.label2}
+              </SvgText>
+            </>
+          )}
+        </G>
+      ))}
     </Svg>
   );
 });
@@ -412,63 +520,74 @@ const Map2D = React.forwardRef(({ activeReports = [], onReportSubmit, highlightR
     return null;
   }, [activeReports]);
 
+  const mapContent = (
+    <View style={styles.container}>
+      <Animated.View style={[styles.mapContent, animatedStyle]}>
+        <Image
+          source={require('../../assets/Map.png')}
+          style={styles.mapImage}
+          resizeMode="contain"
+        />
+        <View style={styles.svgContainer} pointerEvents={flowStep === 'BUILDING' ? 'auto' : 'none'}>
+          <BuildingHitboxes
+            flowStep={flowStep}
+            selectedBuildingId={selectedBuilding?.id}
+            onBuildingPress={handleBuildingPress}
+            buildings={BUILDINGS}
+          />
+        </View>
+        <EvacuationHighlight type={activeEvacuationRoute} />
+        <EvacuationRoute type={activeEvacuationRoute} />
+        {flowStep !== 'BUILDING' && markers}
+      </Animated.View>
+
+      {flowStep === 'BUILDING' && (
+        <View style={styles.instructionBanner}>
+          <Text style={styles.instructionText}>📍 Tap the location on the map</Text>
+        </View>
+      )}
+
+      <EmergencyTypeModal
+        visible={flowStep === 'TYPE'}
+        onClose={() => {
+          setFlowStep('IDLE');
+          if (onFlowEnd) onFlowEnd();
+        }}
+        onSelect={(type) => {
+          setSelectedType(type);
+          setFlowStep('BUILDING');
+        }}
+      />
+
+      <FloorSelectionModal
+        visible={flowStep === 'FLOOR'}
+        buildingName={selectedBuilding?.name}
+        onSelect={(floor) => {
+          setSelectedFloor(floor);
+          setFlowStep('ROOM');
+        }}
+        onSkip={() => finishReport(selectedBuilding?.name)}
+      />
+
+      <RoomSelectionModal
+        visible={flowStep === 'ROOM'}
+        buildingName={selectedBuilding?.name}
+        floorName={selectedFloor}
+        onSelect={(room) => finishReport(`${selectedBuilding?.name} - ${selectedFloor} - ${room}`)}
+        onSkip={() => finishReport(`${selectedBuilding?.name} - ${selectedFloor}`)}
+      />
+    </View>
+  );
+
+  // When selecting a building, bypass GestureDetector entirely so SVG
+  // onPress handlers receive touches without competing with the pan gesture.
+  if (flowStep === 'BUILDING') {
+    return mapContent;
+  }
+
   return (
     <GestureDetector gesture={composedGesture}>
-      <View style={styles.container}>
-        <Animated.View style={[styles.mapContent, animatedStyle]}>
-          <Image
-            source={require('../../assets/Map.png')}
-            style={styles.mapImage}
-            resizeMode="contain"
-          />
-          <View style={styles.svgContainer} pointerEvents={flowStep === 'BUILDING' ? 'auto' : 'none'}>
-            <BuildingHitboxes
-              flowStep={flowStep}
-              selectedBuildingId={selectedBuilding?.id}
-              onBuildingPress={handleBuildingPress}
-              buildings={BUILDINGS}
-            />
-          </View>
-          <EvacuationRoute type={activeEvacuationRoute} />
-          {flowStep !== 'BUILDING' && markers}
-        </Animated.View>
-
-        {flowStep === 'BUILDING' && (
-          <View style={styles.instructionBanner}>
-            <Text style={styles.instructionText}>📍 Tap the location on the map</Text>
-          </View>
-        )}
-
-        <EmergencyTypeModal
-          visible={flowStep === 'TYPE'}
-          onClose={() => {
-            setFlowStep('IDLE');
-            if (onFlowEnd) onFlowEnd();
-          }}
-          onSelect={(type) => {
-            setSelectedType(type);
-            setFlowStep('BUILDING');
-          }}
-        />
-
-        <FloorSelectionModal
-          visible={flowStep === 'FLOOR'}
-          buildingName={selectedBuilding?.name}
-          onSelect={(floor) => {
-            setSelectedFloor(floor);
-            setFlowStep('ROOM');
-          }}
-          onSkip={() => finishReport(selectedBuilding?.name)}
-        />
-
-        <RoomSelectionModal
-          visible={flowStep === 'ROOM'}
-          buildingName={selectedBuilding?.name}
-          floorName={selectedFloor}
-          onSelect={(room) => finishReport(`${selectedBuilding?.name} - ${selectedFloor} - ${room}`)}
-          onSkip={() => finishReport(`${selectedBuilding?.name} - ${selectedFloor}`)}
-        />
-      </View>
+      {mapContent}
     </GestureDetector>
   );
 });

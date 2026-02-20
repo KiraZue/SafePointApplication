@@ -47,14 +47,14 @@ const SignUpScreen = ({ navigation }) => {
   };
 
   return (
-    <ImageBackground source={require('../../assets/SafePoint-assets/MobileBG.png')} style={styles.bg}>
+    <ImageBackground source={require('../../assets/SafePoint-assets/BGPHONE.png')} style={styles.bg}>
       <View style={styles.container}>
-        <Image source={require('../../assets/icon.png')} style={styles.heroLogo} />
+        <Image source={require('../../assets/SafePoint-assets/Logo.png')} style={styles.heroLogo} />
+        <Text style={styles.appTitle}>SAFE POINT</Text>
         {step === 'code' && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Image source={require('../../assets/SafePoint-assets/2log.png')} style={styles.miniLogo} />
-              <Text style={styles.cardTitle}>YOUR GUIDE TO SAFETY</Text>
+              <Text style={styles.cardTitle}>REGISTER YOUR ACCOUNT</Text>
             </View>
             <Text style={styles.inputLabel}>Enter Your User Code</Text>
             <TextInput
@@ -74,7 +74,6 @@ const SignUpScreen = ({ navigation }) => {
         {step === 'confirm' && userInfo && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Image source={require('../../assets/SafePoint-assets/2log.png')} style={styles.miniLogo} />
               <Text style={styles.cardTitle}>CONFIRM YOUR IDENTITY</Text>
             </View>
             <Text style={styles.info}>Full Name: {userInfo.lastName}, {userInfo.firstName} {userInfo.middleName}</Text>
@@ -92,8 +91,7 @@ const SignUpScreen = ({ navigation }) => {
         {step === 'setPassword' && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Image source={require('../../assets/SafePoint-assets/2log.png')} style={styles.miniLogo} />
-              <Text style={styles.cardTitle}>SET PASSWORD</Text>
+              <Text style={styles.cardTitle}>SET YOUR PASSWORD</Text>
             </View>
             <Text style={styles.inputLabel}>Password</Text>
             <TextInput
@@ -116,18 +114,18 @@ const SignUpScreen = ({ navigation }) => {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, resizeMode: 'cover' },
-  container: { flex: 1, padding: 25, justifyContent: 'center' },
-  heroLogo: { width: 720, height: 360, resizeMode: 'contain', alignSelf: 'center' },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 18, paddingBottom: 30, elevation: 6 , bottom: 90},
-  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  miniLogo: { width: 90, height: 90, resizeMode: 'contain', marginBottom: -30},
-  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1f1f1f', marginLeft: -35 },
-  inputLabel: { fontSize: 12, color: '#333', marginTop: 8 },
-  input: { borderWidth: 2, borderColor: '#333', borderRadius: 20, paddingVertical: 10, paddingHorizontal: 12, marginTop: 6, textAlign: 'center' },
+  container: { flex: 1, padding: 25, justifyContent: 'center', gap: 8 },
+  heroLogo: { width: 140, height: 140, resizeMode: 'contain', alignSelf: 'center' },
+  appTitle: { fontSize: 28, fontWeight: 'bold', color: '#1B3F6E', textAlign: 'center', letterSpacing: 2, marginBottom: 6 },
+  card: { backgroundColor: '#fff', borderRadius: 20, padding: 20, paddingBottom: 28, elevation: 8, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 10 },
+  cardHeader: { alignItems: 'center', marginBottom: 10 },
+  cardTitle: { fontSize: 13, fontWeight: 'bold', color: '#1B3F6E', textAlign: 'center', letterSpacing: 1 },
+  inputLabel: { fontSize: 12, color: '#1B3F6E', fontWeight: '600', marginTop: 8 },
+  input: { borderWidth: 2, borderColor: '#1B3F6E', borderRadius: 25, paddingVertical: 10, paddingHorizontal: 16, marginTop: 6, textAlign: 'center', color: '#1B3F6E' },
   ctaBtn: { height: 52, borderRadius: 25, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  primaryBtn: { backgroundColor: '#2b4266' },
-  secondaryBtn: { backgroundColor: '#9e9e9e' },
-  ctaText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  primaryBtn: { backgroundColor: '#CC1B1B' },
+  secondaryBtn: { backgroundColor: '#1B3F6E' },
+  ctaText: { color: '#fff', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 },
   info: { fontSize: 14, color: '#333', marginBottom: 4, textAlign: 'center' },
 });
 

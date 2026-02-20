@@ -89,13 +89,13 @@ const LoginScreen = () => {
   }, []);
 
   return (
-    <ImageBackground source={require('../../assets/SafePoint-assets/MobileBG.png')} style={styles.bg}>
+    <ImageBackground source={require('../../assets/SafePoint-assets/BGPHONE.png')} style={styles.bg}>
       <View style={styles.container}>
-        <Image source={require('../../assets/icon.png')} style={styles.heroLogo} />
+        <Image source={require('../../assets/SafePoint-assets/Logo.png')} style={styles.heroLogo} />
+        <Text style={styles.appTitle}>SAFE POINT</Text>
         <View style={styles.card}>
           <View style={styles.cardHeader}>
-            <Image source={require('../../assets/SafePoint-assets/2log.png')} style={styles.miniLogo} />
-            <Text style={styles.cardTitle}>YOUR GUIDE TO SAFETY</Text>
+            <Text style={styles.cardTitle}>OFFLINE SCHOOL SAFETY SYSTEM</Text>
           </View>
 
           <Text style={styles.inputLabel}>User Code or Full Name</Text>
@@ -125,6 +125,7 @@ const LoginScreen = () => {
           <TouchableOpacity style={[styles.ctaBtn, styles.registerBtn]} onPress={() => navigation.navigate('SignUp')} disabled={!isConnected}>
             <Text style={styles.ctaText}>REGISTER</Text>
           </TouchableOpacity>
+
 
           {/* Connection Status Indicator - MOVED BELOW BUTTONS */}
           <View style={[styles.connectionBadge, { backgroundColor: isConnected ? '#e8f5e9' : (checkingConnection ? '#fff4e5' : '#ffebee') }]}>
@@ -190,14 +191,13 @@ const LoginScreen = () => {
 
 const styles = StyleSheet.create({
   bg: { flex: 1, resizeMode: 'cover' },
-  container: { flex: 1, padding: 25, paddingTop: 0, justifyContent: 'center', gap: 16 },
-  heroLogo: { width: 200, height: 200, resizeMode: 'contain', alignSelf: 'center' },
-  card: { backgroundColor: '#fff', borderRadius: 16, padding: 18, paddingBottom: 30, elevation: 6, bottom: 0 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
-  miniLogo: { width: 90, height: 90, resizeMode: 'contain', marginBottom: -30 },
-  cardTitle: { fontSize: 18, fontWeight: 'bold', color: '#1f1f1f', marginLeft: -35 },
+  container: { flex: 1, padding: 25, paddingTop: 0, justifyContent: 'center', gap: 8 },
+  heroLogo: { width: 160, height: 160, resizeMode: 'contain', alignSelf: 'center' },
+  appTitle: { fontSize: 28, fontWeight: 'bold', color: '#1B3F6E', textAlign: 'center', letterSpacing: 2, marginBottom: 4 },
+  card: { backgroundColor: '#fff', borderRadius: 20, padding: 20, paddingBottom: 28, elevation: 8, shadowColor: '#000', shadowOpacity: 0.12, shadowRadius: 10 },
+  cardHeader: { alignItems: 'center', marginBottom: 10 },
+  cardTitle: { fontSize: 13, fontWeight: 'bold', color: '#1B3F6E', textAlign: 'center', letterSpacing: 1 },
 
-  // Connection Badge - now below buttons
   connectionBadge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -219,12 +219,12 @@ const styles = StyleSheet.create({
     fontWeight: '600'
   },
 
-  inputLabel: { fontSize: 12, color: '#333', marginTop: 12 },
-  input: { borderWidth: 2, borderColor: '#333', borderRadius: 20, paddingVertical: 10, paddingHorizontal: 12, marginTop: 6, textAlign: 'center' },
-  ctaBtn: { height: 52, borderRadius: 12, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  loginBtn: { backgroundColor: '#2b4266', marginTop: 20, borderRadius: 25, },
-  registerBtn: { backgroundColor: '#2b4266', borderRadius: 25 },
-  ctaText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  inputLabel: { fontSize: 12, color: '#1B3F6E', fontWeight: '600', marginTop: 12 },
+  input: { borderWidth: 2, borderColor: '#1B3F6E', borderRadius: 25, paddingVertical: 10, paddingHorizontal: 16, marginTop: 6, textAlign: 'center', color: '#1B3F6E' },
+  ctaBtn: { height: 52, borderRadius: 25, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  loginBtn: { backgroundColor: '#CC1B1B', marginTop: 20 },
+  registerBtn: { backgroundColor: '#CC1B1B' },
+  ctaText: { color: '#fff', fontSize: 18, fontWeight: 'bold', letterSpacing: 1 },
 
   settingsLink: { marginTop: 10, alignSelf: 'center' },
   settingsLinkText: { color: '#888', textDecorationLine: 'underline', fontSize: 12 },
@@ -234,17 +234,17 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center', padding: 20, zIndex: 999
   },
   modalContent: {
-    backgroundColor: '#fff', width: '100%', borderRadius: 12, padding: 20, elevation: 5
+    backgroundColor: '#fff', width: '100%', borderRadius: 16, padding: 20, elevation: 5
   },
-  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10, color: '#333' },
+  modalTitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 10, color: '#1B3F6E' },
   modalDesc: { fontSize: 14, color: '#666', marginBottom: 15 },
   modalInput: {
-    borderWidth: 1, borderColor: '#ddd', borderRadius: 8, padding: 10, fontSize: 16, marginBottom: 20
+    borderWidth: 1, borderColor: '#1B3F6E', borderRadius: 10, padding: 10, fontSize: 16, marginBottom: 20
   },
   modalButtons: { flexDirection: 'row', justifyContent: 'flex-end', gap: 10 },
   modalBtnCancel: { padding: 10 },
   modalBtnTextCancel: { color: '#666', fontWeight: 'bold' },
-  modalBtnSave: { backgroundColor: '#2196f3', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 8 },
+  modalBtnSave: { backgroundColor: '#1B3F6E', paddingVertical: 10, paddingHorizontal: 20, borderRadius: 10 },
   modalBtnTextSave: { color: '#fff', fontWeight: 'bold' }
 });
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Dimensions, TextInput, Image, Alert, ScrollView, ActivityIndicator, Platform } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Dimensions, TextInput, Image, Alert, ScrollView, ActivityIndicator, Platform, Modal } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import NetInfo from '@react-native-community/netinfo';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -63,12 +63,28 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
   const { updateUser } = useAuth(); // Get updateUser from context
 
   const width = panelWidth || Math.round(screenWidth * 0.85);
-  const slide = useRef(new Animated.Value(width)).current;
+  const slide = useRef(new Animated.Value(screenWidth)).current;
   const [activeTab, setActiveTab] = useState(initialTab || 'Emergency');
   const [editingEmergency, setEditingEmergency] = useState(false);
   const [editingPersonal, setEditingPersonal] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [clearingData, setClearingData] = useState(false);
+  const [tosVisible, setTosVisible] = useState(false);
+  const [showMore, setShowMore] = useState(false);
+  const [pendingEdit, setPendingEdit] = useState(null); // 'emergency' | 'personal'
+
+  const openEditWithTos = (type) => {
+    setShowMore(false);
+    setPendingEdit(type);
+    setTosVisible(true);
+  };
+
+  const handleAgree = () => {
+    setTosVisible(false);
+    if (pendingEdit === 'emergency') setEditingEmergency(true);
+    if (pendingEdit === 'personal') setEditingPersonal(true);
+    setPendingEdit(null);
+  };
 
   // Initialize from props (offline support)
   const [contactPerson, setContactPerson] = useState(user?.emergencyContact?.name || '');
@@ -103,7 +119,12 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
   }, [initialTab]);
 
   useEffect(() => {
-    Animated.spring(slide, { toValue: visible ? 0 : width, useNativeDriver: true, damping: 18, stiffness: 180 }).start();
+    Animated.timing(slide, {
+      toValue: visible ? 0 : screenWidth,
+      duration: visible ? 300 : 250,
+      easing: visible ? Easing.out(Easing.cubic) : Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
   }, [visible, slide, width]);
 
   useEffect(() => {
@@ -292,7 +313,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
                 }}
               >
                 <View style={styles.settingIcon}>
-                  <Ionicons name="wifi" size={20} color="#2b4266" />
+                  <Ionicons name="wifi" size={20} color="#1B3F6E" />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.settingLabel}>Wi-Fi Direct Connectivity</Text>
@@ -369,7 +390,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
                 }}
               >
                 <View style={[styles.settingIcon, { backgroundColor: proxyActive ? '#e8f5e9' : '#eef2f6' }]}>
-                  <Ionicons name={proxyActive ? "radio" : "radio-outline"} size={20} color={proxyActive ? "#4caf50" : "#2b4266"} />
+                  <Ionicons name={proxyActive ? "radio" : "radio-outline"} size={20} color={proxyActive ? "#4caf50" : "#1B3F6E"} />
                 </View>
                 <View style={{ flex: 1 }}>
                   <Text style={styles.settingLabel}>Hotspot Proxy Mode</Text>
@@ -377,7 +398,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
                     {proxyActive ? 'Active (Port 8080)' : 'Enable when sharing Hotspot'}
                   </Text>
                 </View>
-                {clearingData && !pendingCount ? <ActivityIndicator size="small" color="#2b4266" /> : (
+                {clearingData && !pendingCount ? <ActivityIndicator size="small" color="#1B3F6E" /> : (
                   <Ionicons name={proxyActive ? "checkmark-circle" : "ellipse-outline"} size={24} color={proxyActive ? "#4caf50" : "#ccc"} />
                 )}
               </TouchableOpacity>
@@ -432,7 +453,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
               <Field label="Contact No." value={contactNo} onChangeText={setContactNo} editable={editingEmergency} />
               <Field label="Contact Address" value={contactAddress} onChangeText={setContactAddress} editable={editingEmergency} />
               {!editingEmergency ? (
-                <TouchableOpacity style={styles.editBtn} onPress={() => setEditingEmergency(true)} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.editBtn} onPress={() => openEditWithTos('emergency')} activeOpacity={0.85}>
                   <Text style={styles.editText}>EDIT</Text>
                 </TouchableOpacity>
               ) : (
@@ -470,7 +491,7 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
               />
               <Field label="Contact No." value={personalContact} onChangeText={setPersonalContact} editable={editingPersonal} />
               {!editingPersonal ? (
-                <TouchableOpacity style={styles.editBtn} onPress={() => setEditingPersonal(true)} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.editBtn} onPress={() => openEditWithTos('personal')} activeOpacity={0.85}>
                   <Text style={styles.editText}>EDIT</Text>
                 </TouchableOpacity>
               ) : (
@@ -483,6 +504,97 @@ const ProfileSidebar = ({ visible, onClose, user, panelWidth, initialTab }) => {
           )}
         </ScrollView>
       </View>
+
+      {/* Terms of Service Modal */}
+      <Modal
+        visible={tosVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTosVisible(false)}
+      >
+        <View style={styles.tosOverlay}>
+          <View style={styles.tosCard}>
+            {/* Header */}
+            <View style={styles.tosHeader}>
+              <Text style={styles.tosTitle}>Terms of Service &amp; Privacy Policy</Text>
+              <TouchableOpacity onPress={() => setTosVisible(false)} style={styles.tosCloseBtn} activeOpacity={0.8}>
+                <View style={styles.tosCloseCircle}>
+                  <Text style={styles.tosCloseX}>✕</Text>
+                </View>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.tosScroll} showsVerticalScrollIndicator={false}>
+              <Text style={styles.tosIntro}>
+                By using SafePoint, you agree to the following terms.
+              </Text>
+
+              {/* Always visible sections */}
+              <Text style={styles.tosSectionTitle}>Information We Collect</Text>
+              <Text style={styles.tosSectionBody}>
+                To provide emergency alert and notification services, SafePoint may collect certain personal information when you register or use the app. This includes location data and device information necessary to deliver timely emergency alerts and reports.
+              </Text>
+
+              <Text style={styles.tosSectionTitle}>How We Use Your Information</Text>
+              <Text style={styles.tosSectionBody}>
+                Your information is used to send emergency alerts, process incident reports, notify relevant contacts or authorities, and improve the reliability of the app. We do not sell your personal data to third parties.
+              </Text>
+
+              {/* Expandable sections */}
+              {showMore && (
+                <>
+                  <Text style={styles.tosSectionTitle}>Location Data</Text>
+                  <Text style={styles.tosSectionBody}>
+                    SafePoint may request access to your location in order to accurately report and respond to emergency situations. Location data is only used for emergency alert and notification purposes.
+                  </Text>
+
+                  <Text style={styles.tosSectionTitle}>Data Storage &amp; Security</Text>
+                  <Text style={styles.tosSectionBody}>
+                    Your data is stored securely. We take reasonable measures to protect your information from unauthorized access. However, no method of transmission over the internet is 100% secure.
+                  </Text>
+
+                  <Text style={styles.tosSectionTitle}>Third-Party Services</Text>
+                  <Text style={styles.tosSectionBody}>
+                    SafePoint may use third-party services to support app functionality. These services operate under their own privacy policies.
+                  </Text>
+
+                  <Text style={styles.tosSectionTitle}>Your Rights</Text>
+                  <Text style={styles.tosSectionBody}>
+                    You may request to view, update, or delete your personal data at any time by contacting the SafePoint Admin.
+                  </Text>
+
+                  <Text style={styles.tosSectionTitle}>Changes to This Policy</Text>
+                  <Text style={styles.tosSectionBody}>
+                    We reserve the right to update these terms at any time. Continued use of SafePoint after changes means you accept the revised terms.
+                  </Text>
+
+                  <Text style={styles.tosSectionTitle}>Contact</Text>
+                  <Text style={styles.tosSectionBody}>
+                    For questions or concerns, please contact the SafePoint Admin directly through the app.
+                  </Text>
+                </>
+              )}
+
+              {/* Show more / Show less toggle */}
+              <TouchableOpacity onPress={() => setShowMore(v => !v)} style={styles.tosShowMoreBtn} activeOpacity={0.7}>
+                <View style={styles.tosChevronBox}>
+                  <Ionicons name={showMore ? 'chevron-up' : 'chevron-down'} size={20} color="#333" />
+                </View>
+                <Text style={styles.tosShowMoreText}>{showMore ? 'Show less' : 'Show more'}</Text>
+              </TouchableOpacity>
+
+              <Text style={styles.tosFootnote}>
+                By tapping "I Agree" you acknowledge that you have read and understood these terms and consent to the collection of information necessary to provide emergency alert services.
+              </Text>
+            </ScrollView>
+
+            {/* I AGREE button */}
+            <TouchableOpacity style={styles.tosAgreeBtn} onPress={handleAgree} activeOpacity={0.85}>
+              <Text style={styles.tosAgreeText}>I AGREE</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </Animated.View>
   );
 };
@@ -505,16 +617,16 @@ const styles = StyleSheet.create({
   optionList: { marginTop: 6, borderWidth: 1, borderColor: '#ddd', borderRadius: 10, overflow: 'hidden' },
   optionItem: { paddingVertical: 10, paddingHorizontal: 12, backgroundColor: '#fafafa' },
   optionText: { color: '#333', fontSize: 14 },
-  editBtn: { backgroundColor: '#2b4266', height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  editBtn: { backgroundColor: '#CC1B1B', height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
   editText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  updateBtn: { backgroundColor: '#2b4266', height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
+  updateBtn: { backgroundColor: '#1B3F6E', height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
   updateText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
   updateNote: { textAlign: 'center', color: '#666', marginTop: 6 },
   tabs: { flexDirection: 'row', justifyContent: 'space-around', borderBottomWidth: 1, borderBottomColor: '#eee', backgroundColor: '#fff' },
   tabBtn: { flex: 1, paddingVertical: 12, alignItems: 'center' },
-  tabActive: { borderBottomWidth: 3, borderBottomColor: '#2b4266' },
+  tabActive: { borderBottomWidth: 3, borderBottomColor: '#CC1B1B' },
   tabText: { fontSize: 14, color: '#666', fontWeight: 'bold' },
-  tabTextActive: { color: '#2b4266' },
+  tabTextActive: { color: '#CC1B1B' },
   settingItem: { flexDirection: 'row', alignItems: 'center', padding: 12, backgroundColor: '#fafafa', borderRadius: 12, marginBottom: 12, borderWidth: 1, borderColor: '#eee' },
   settingIcon: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#eef2f6', alignItems: 'center', justifyContent: 'center', marginRight: 12 },
   settingLabel: { fontSize: 16, fontWeight: 'bold', color: '#333' },
@@ -524,6 +636,25 @@ const styles = StyleSheet.create({
   clearDataBtnDisabled: { backgroundColor: '#ccc' },
   clearDataText: { color: '#fff', fontSize: 14, fontWeight: 'bold', marginLeft: 6 },
   allSyncedText: { fontSize: 12, color: '#4caf50', marginTop: 8, textAlign: 'center', fontWeight: 'bold' },
+
+  // Terms of Service Modal
+  tosOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.45)', justifyContent: 'center', alignItems: 'center', paddingHorizontal: 20 },
+  tosCard: { backgroundColor: '#fff', borderRadius: 20, width: '100%', maxHeight: '85%', paddingHorizontal: 20, paddingTop: 20, paddingBottom: 16, elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.25, shadowRadius: 8 },
+  tosHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 },
+  tosTitle: { fontSize: 16, fontWeight: 'bold', color: '#111', flex: 1, paddingRight: 8 },
+  tosCloseBtn: { padding: 2 },
+  tosCloseCircle: { width: 32, height: 32, borderRadius: 16, backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' },
+  tosCloseX: { color: '#fff', fontSize: 16, fontWeight: 'bold', lineHeight: 18 },
+  tosScroll: { maxHeight: 380 },
+  tosIntro: { fontSize: 12, color: '#444', marginBottom: 10, fontStyle: 'italic' },
+  tosSectionTitle: { fontSize: 13, fontWeight: 'bold', color: '#111', marginTop: 10, marginBottom: 3 },
+  tosSectionBody: { fontSize: 12, color: '#333', lineHeight: 18, textAlign: 'justify' },
+  tosShowMoreBtn: { alignItems: 'center', marginTop: 14, marginBottom: 4 },
+  tosChevronBox: { width: 36, height: 36, borderRadius: 8, borderWidth: 1.5, borderColor: '#555', alignItems: 'center', justifyContent: 'center', marginBottom: 4 },
+  tosShowMoreText: { fontSize: 12, color: '#333', fontWeight: '600' },
+  tosFootnote: { fontSize: 11, color: '#555', textAlign: 'center', marginTop: 10, marginBottom: 6, lineHeight: 16, fontStyle: 'italic' },
+  tosAgreeBtn: { backgroundColor: '#CC1B1B', borderRadius: 30, height: 52, alignItems: 'center', justifyContent: 'center', marginTop: 10 },
+  tosAgreeText: { color: '#fff', fontSize: 18, fontWeight: 'bold', letterSpacing: 1.5 },
 });
 
 export default ProfileSidebar;

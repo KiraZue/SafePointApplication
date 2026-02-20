@@ -3,7 +3,10 @@ import { updateApiConfig } from './api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform, DeviceEventEmitter } from 'react-native';
 import Constants from 'expo-constants';
-import * as Device from 'expo-device';
+
+// expo-device is a native-only module (not supported in Expo Go).
+// Use Constants.isDevice from expo-constants as a safe cross-environment replacement.
+const isDevice = Constants.isDevice ?? true;
 import NetInfo from '@react-native-community/netinfo';
 
 let zeroconf = null;
@@ -24,9 +27,7 @@ export const startDiscovery = async () => {
     try {
         const netInfo = await NetInfo.fetch();
         console.log('[Discovery] Device Info:', {
-            isDevice: Device.isDevice,
-            brand: Device.brand,
-            modelName: Device.modelName,
+            isDevice,
             osVersion: Platform.Version,
             ipAddress: netInfo.details?.ipAddress,
             subnet: netInfo.details?.subnet,
@@ -34,7 +35,7 @@ export const startDiscovery = async () => {
         });
 
         // Skip discovery on Emulator (Unsupported and causes code 0 errors)
-        if (!Device.isDevice) {
+        if (!isDevice) {
             console.log('[Discovery] Running on Emulator - skipping zeroconf.');
             return;
         }
