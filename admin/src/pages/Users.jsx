@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import Layout from '../components/Layout';
-import TwoLog from '../assets/2log.png';
+import TwoLog from '../assets/Logo1.png';
 
 const ChangePasswordButton = ({ userId, onChanged }) => {
   const [open, setOpen] = useState(false);
@@ -27,7 +27,7 @@ const ChangePasswordButton = ({ userId, onChanged }) => {
   };
   return (
     <>
-      <button className="text-lime-600 hover:text-lime-700 transition-colors" onClick={() => setOpen(true)}>Change Password</button>
+      <button className="text-red-600 hover:text-red-700 transition-colors" onClick={() => setOpen(true)}>Change Password</button>
       {open && (
         <div className="fixed inset-0 bg-black bg-opacity-40 backdrop-blur-sm flex items-center justify-center">
           <div className="relative bg-white p-6 rounded-2xl shadow-lg w-[560px] transition-all">
@@ -112,6 +112,7 @@ const Users = () => {
   const roleParam = new URLSearchParams(location.search).get('role');
   const [activeTab, setActiveTab] = useState(roleParam || 'Student');
   const showModal = new URLSearchParams(location.search).get('add') === '1';
+  const [searchQuery, setSearchQuery] = useState('');
   const [formData, setFormData] = useState({
     firstName: '',
     lastName: '',
@@ -130,8 +131,8 @@ const Users = () => {
         activeTab === 'Deleted Users'
           ? 'http://localhost:5000/api/users/deleted'
           : activeTab === 'Changed Users'
-          ? 'http://localhost:5000/api/users/changed'
-          : 'http://localhost:5000/api/users';
+            ? 'http://localhost:5000/api/users/changed'
+            : 'http://localhost:5000/api/users';
       const { data } = await axios.get(url, config);
       setUsers(data);
     } catch (error) {
@@ -164,24 +165,31 @@ const Users = () => {
     }
   };
 
-  const filteredUsers =
+  const filteredUsers = (
     activeTab === 'Deleted Users'
       ? users
       : activeTab === 'Changed Users'
-      ? users
-      : users.filter((user) => user.role === activeTab);
+        ? users
+        : users.filter((user) => user.role === activeTab)
+  ).filter((user) => {
+    const query = searchQuery.toLowerCase();
+    const fullName = `${user.firstName} ${user.lastName} ${user.middleName || ''}`.toLowerCase();
+    const reverseName = `${user.lastName} ${user.firstName}`.toLowerCase();
+    const userCode = (user.userCode || '').toLowerCase();
+
+    return fullName.includes(query) || reverseName.includes(query) || userCode.includes(query);
+  });
 
   return (
     <Layout>
       <h1 className="text-3xl font-extrabold tracking-wide text-gray-900 text-center mb-6">ADMIN PANEL</h1>
 
-      <div className="flex items-center mb-6 bg-lime-200 rounded-full px-3 py-2">
+      <div className="flex items-center mb-6 bg-red-100 rounded-full px-3 py-2">
         {roles.map((role) => (
           <button
             key={role}
-            className={`px-4 py-2 mr-2 rounded-full transition-all duration-200 ${
-              activeTab === role ? 'font-bold underline underline-offset-4' : 'text-gray-600 hover:text-gray-800'
-            }`}
+            className={`px-4 py-2 mr-2 rounded-full transition-all duration-200 ${activeTab === role ? 'font-bold underline underline-offset-4' : 'text-gray-600 hover:text-gray-800'
+              }`}
             onClick={() => {
               setActiveTab(role);
               navigate(`/users?role=${encodeURIComponent(role)}`);
@@ -192,9 +200,34 @@ const Users = () => {
         ))}
       </div>
 
-      <div className="bg-white rounded-xl shadow-md overflow-hidden">
+      <div className="mb-6 relative">
+        <input
+          type="text"
+          placeholder="Smart Search: Enter Name or User Code..."
+          className="w-full px-6 py-3 rounded-full bg-white shadow-md border border-gray-100 focus:outline-none focus:ring-2 focus:ring-[#2f4863]/30 transition-all pl-12"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+        />
+        <div className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">
+          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        </div>
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+            </svg>
+          </button>
+        )}
+      </div>
+
+      <div className="bg-white rounded-xl shadow-md overflow-hidden max-h-[calc(100vh-16rem)] overflow-y-auto custom-scrollbar">
         <table className="min-w-full">
-          <thead className="bg-[#2f4863] text-white">
+          <thead className="bg-[#2f4863] text-white sticky top-0 z-10">
             <tr>
               <th className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">
                 Name
@@ -324,7 +357,7 @@ const Users = () => {
                   required
                 />
               </div>
-              
+
               <div className="flex justify-center space-x-4 mt-2">
                 <button
                   type="button"

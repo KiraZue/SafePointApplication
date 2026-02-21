@@ -1,26 +1,21 @@
+// notificationController.js — SQLite3 version
 const { sendPushNotification } = require('../utils/notification');
 const User = require('../models/User');
 
 // @desc    Notify users about a new Wi-Fi Direct group
 // @route   POST /api/notifications/group
-// @access  Private
 const notifyGroupStarted = async (req, res) => {
     const { groupName, hostIp } = req.body;
     const hostUser = req.user;
 
     try {
-        // Notify all other users
-        // We can exclude the host if needed, but sendPushNotification handles userIds if provided.
-        // If userIds is not provided, it sends to ALL users with pushToken.
-        // We should probably exclude the sender.
-
-        // Find all users except the host
-        const otherUsers = await User.find({
+        // Find all users (excluding host) who have a push token
+        const otherUsers = User.find({
             _id: { $ne: hostUser._id },
-            pushToken: { $exists: true, $ne: '' }
-        }).select('_id');
+            pushToken: { $exists: true, $ne: '' },
+        });
 
-        if (otherUsers.length === 0) {
+        if (!otherUsers || otherUsers.length === 0) {
             return res.status(200).json({ message: 'No users to notify' });
         }
 
@@ -33,8 +28,8 @@ const notifyGroupStarted = async (req, res) => {
             data: {
                 type: 'NEW_GROUP',
                 hostIp: hostIp,
-                hostName: `${hostUser.firstName} ${hostUser.lastName}`
-            }
+                hostName: `${hostUser.firstName} ${hostUser.lastName}`,
+            },
         });
 
         res.status(200).json({ message: 'Notification sent', count: userIds.length });

@@ -1,6 +1,6 @@
 import Sidebar from './Sidebar';
-import Background from '../assets/BackGorund.png';
-import Logo from '../assets/Logo.png';
+import Background from '../assets/BackGround.png';
+import Logo from '../assets/Logo1.png';
 import { useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 
@@ -39,9 +39,9 @@ const Layout = ({ children }) => {
             title="Logout"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-              <path d="M16 17l5-5-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M21 12H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-              <path d="M12 21H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              <path d="M16 17l5-5-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M21 12H9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              <path d="M12 21H6a3 3 0 0 1-3-3V6a3 3 0 0 1 3-3h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </button>
           <span className="text-sm font-semibold tracking-wide">
@@ -57,13 +57,13 @@ const Layout = ({ children }) => {
             <p className="text-xl font-extrabold mb-5">Are you sure you want to log out?</p>
             <div className="flex justify-center gap-6">
               <button
-                className="px-6 py-2 rounded-full bg-[#2f4863] text-white font-bold cursor-pointer hover:bg-lime-500 hover:text-black transition-colors"
+                className="px-6 py-2 rounded-full bg-[#2f4863] text-white font-bold cursor-pointer hover:bg-red-600 transition-colors"
                 onClick={() => setShowLogout(false)}
               >
                 CANCEL
               </button>
               <button
-                className="px-6 py-2 rounded-full bg-[#2f4863] text-white font-bold cursor-pointer hover:bg-lime-500 hover:text-black transition-colors"
+                className="px-6 py-2 rounded-full bg-[#2f4863] text-white font-bold cursor-pointer hover:bg-red-600 transition-colors"
                 onClick={handleConfirmLogout}
               >
                 YES
